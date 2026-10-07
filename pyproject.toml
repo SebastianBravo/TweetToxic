@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "es-core-news-sm",
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",
     "kagglehub>=1.0.2",
@@ -15,4 +16,8 @@ dependencies = [
     "pandas>=2.3.3",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
+    "spacy>=3.8.16",
 ]
+
+[tool.uv.sources]
+es-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl" }
