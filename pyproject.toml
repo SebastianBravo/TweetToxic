@@ -14,6 +14,7 @@ dependencies = [
     "nbformat>=5.11.1",
     "numpy>=2.2.6",
     "pandas>=2.3.3",
+    "pyarrow>=25.0.1",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "spacy>=3.8.16",
