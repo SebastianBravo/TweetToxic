@@ -1,0 +1,132 @@
+{
+  "name": "V2__rbfsvm__nested",
+  "created": "2026-10-13T23:39:12",
+  "variant": "V2",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": false,
+    "lemma": false
+  },
+  "features": "tfidf",
+  "classifier": "rbfsvm",
+  "family": "kernel",
+  "clf_params": {
+    "C": 10.0
+  },
+  "classifier_repr": "CalibratedClassifierCV(cv=3, estimator=SVC(C=10.0, class_weight='balanced'))",
+  "proba_calibrated": true,
+  "thresholds": {
+    "HS": 0.41,
+    "TR": 0.34,
+    "AG": 0.34
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "04",
+  "stage": "finalista",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.7628270261176644,
+        "std": 0.018692286478451618
+      },
+      "F1_TR": {
+        "mean": 0.7996697712856251,
+        "std": 0.04657127175883365
+      },
+      "F1_AG": {
+        "mean": 0.7202165797408957,
+        "std": 0.029175323238224
+      },
+      "F1_macro": {
+        "mean": 0.7609044590480616,
+        "std": 0.029792912675926007
+      },
+      "F1_micro": {
+        "mean": 0.7589089255827959,
+        "std": 0.02814608520775094
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7781810657532,
+        "std": 0.025305307442869667
+      },
+      "F1_TR": {
+        "mean": 0.8011310511881629,
+        "std": 0.04672754250557205
+      },
+      "F1_AG": {
+        "mean": 0.7330392615986228,
+        "std": 0.013993601398865262
+      },
+      "F1_macro": {
+        "mean": 0.7707837928466619,
+        "std": 0.01999738894764815
+      },
+      "F1_micro": {
+        "mean": 0.7685113850180144,
+        "std": 0.0185487132356711
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "grid": [
+    {
+      "C": 0.3
+    },
+    {
+      "C": 1.0
+    },
+    {
+      "C": 3.0
+    },
+    {
+      "C": 10.0
+    }
+  ],
+  "params_per_fold": [
+    {
+      "C": 10.0
+    },
+    {
+      "C": 3.0
+    },
+    {
+      "C": 10.0
+    },
+    {
+      "C": 3.0
+    },
+    {
+      "C": 10.0
+    }
+  ]
+}

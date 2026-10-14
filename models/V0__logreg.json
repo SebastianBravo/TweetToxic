@@ -1,6 +1,6 @@
 {
   "name": "V0__logreg",
-  "created": "2026-10-13T20:44:28",
+  "created": "2026-10-13T21:32:04",
   "variant": "V0",
   "variant_steps": {
     "artifacts": false,
@@ -15,8 +15,12 @@
     "restore": false,
     "lemma": false
   },
+  "features": "tfidf",
   "classifier": "logreg",
-  "classifier_params": "LogisticRegression(class_weight='balanced', max_iter=2000, random_state=42,\n                   solver='liblinear')",
+  "family": "lineal",
+  "clf_params": null,
+  "classifier_repr": "LogisticRegression(class_weight='balanced', max_iter=2000, random_state=42,\n                   solver='liblinear')",
+  "proba_calibrated": false,
   "thresholds": {
     "HS": 0.41,
     "TR": 0.45,
@@ -37,7 +41,9 @@
     "spacy": "3.8.16",
     "spacy_model": "es_core_news_sm",
     "seed": 42,
-    "git_commit": "760d98a"
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
   },
   "cv": {
     "at_05": {

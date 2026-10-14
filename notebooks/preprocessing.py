@@ -430,13 +430,18 @@ class TweetPreprocessor(BaseEstimator, TransformerMixin):
       se construye en fit() con los textos de entrenamiento (sin etiquetas), así que dentro de una
       validación cruzada se recalcula en cada fold.
 
+    - keep_raw: añade la columna 'raw' con el texto crudo (para rasgos que necesitan, por ejemplo,
+      las mayúsculas originales).
+
     transform() devuelve un DataFrame con la columna 'text' (pasos a-e) y, si la variante lematiza,
     'lemmas' (paso f). Se guarda con joblib junto al modelo; spaCy no se serializa, se carga al usarlo.
     """
 
-    def __init__(self, variant: str | Variant = "V1", restore_dict: dict[str, str] | None = None):
+    def __init__(self, variant: str | Variant = "V1", restore_dict: dict[str, str] | None = None,
+                 keep_raw: bool = False):
         self.variant = variant
         self.restore_dict = restore_dict
+        self.keep_raw = keep_raw
 
     def _resolve_variant(self) -> Variant:
         return VARIANTS[self.variant] if isinstance(self.variant, str) else self.variant
@@ -452,4 +457,8 @@ class TweetPreprocessor(BaseEstimator, TransformerMixin):
 
     def transform(self, X) -> pd.DataFrame:
         check_is_fitted(self, "variant_")
-        return build_views(_as_text_series(X), self.variant_, self.restore_dict_, lemma_cache=LEMMA_CACHE)
+        texts = _as_text_series(X)
+        views = build_views(texts, self.variant_, self.restore_dict_, lemma_cache=LEMMA_CACHE)
+        if getattr(self, "keep_raw", False):
+            views["raw"] = texts.values
+        return views

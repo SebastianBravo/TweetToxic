@@ -1,0 +1,161 @@
+{
+  "name": "V1__logreg__nested",
+  "created": "2026-10-13T23:39:09",
+  "variant": "V1",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 0,
+    "laughs": false,
+    "censor": false,
+    "restore": false,
+    "lemma": false
+  },
+  "features": "tfidf",
+  "classifier": "logreg",
+  "family": "lineal",
+  "clf_params": {
+    "C": 3.0,
+    "l1_ratio": 0.5
+  },
+  "classifier_repr": "LogisticRegression(C=3.0, class_weight='balanced', l1_ratio=0.5, max_iter=3000,\n                   random_state=42, solver='saga', tol=0.001)",
+  "proba_calibrated": false,
+  "thresholds": {
+    "HS": 0.43,
+    "TR": 0.47,
+    "AG": 0.39
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "04",
+  "stage": "finalista",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.7845261984392419,
+        "std": 0.0336534854009706
+      },
+      "F1_TR": {
+        "mean": 0.8334514948484708,
+        "std": 0.019888181990544592
+      },
+      "F1_AG": {
+        "mean": 0.7582282821835143,
+        "std": 0.023204038342602484
+      },
+      "F1_macro": {
+        "mean": 0.7920686584904091,
+        "std": 0.018302551189317767
+      },
+      "F1_micro": {
+        "mean": 0.7890512243946706,
+        "std": 0.019362487392909213
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.777153478026564,
+        "std": 0.01859112507548577
+      },
+      "F1_TR": {
+        "mean": 0.8254625282895665,
+        "std": 0.02814378912955091
+      },
+      "F1_AG": {
+        "mean": 0.7605832723995363,
+        "std": 0.018349287148244183
+      },
+      "F1_macro": {
+        "mean": 0.7877330929052222,
+        "std": 0.01588353881116369
+      },
+      "F1_micro": {
+        "mean": 0.7837106963624924,
+        "std": 0.015388185885354122
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "grid": [
+    {
+      "C": 0.3
+    },
+    {
+      "C": 1.0
+    },
+    {
+      "C": 3.0
+    },
+    {
+      "C": 10.0
+    },
+    {
+      "C": 30.0
+    },
+    {
+      "C": 1.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 3.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 3.0,
+      "l1_ratio": 1.0
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 1.0
+    }
+  ],
+  "params_per_fold": [
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    },
+    {
+      "C": 10.0,
+      "l1_ratio": 0.5
+    }
+  ]
+}

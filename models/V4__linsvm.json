@@ -1,6 +1,6 @@
 {
   "name": "V4__linsvm",
-  "created": "2026-10-13T20:44:39",
+  "created": "2026-10-13T21:32:15",
   "variant": "V4",
   "variant_steps": {
     "artifacts": true,
@@ -15,8 +15,12 @@
     "restore": true,
     "lemma": true
   },
+  "features": "tfidf",
   "classifier": "linsvm",
-  "classifier_params": "CalibratedClassifierCV(cv=3,\n                       estimator=LinearSVC(class_weight='balanced',\n                                           random_state=42))",
+  "family": "lineal",
+  "clf_params": null,
+  "classifier_repr": "CalibratedClassifierCV(cv=3,\n                       estimator=LinearSVC(class_weight='balanced',\n                                           random_state=42))",
+  "proba_calibrated": true,
   "thresholds": {
     "HS": 0.37,
     "TR": 0.38,
@@ -37,7 +41,9 @@
     "spacy": "3.8.16",
     "spacy_model": "es_core_news_sm",
     "seed": 42,
-    "git_commit": "760d98a"
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
   },
   "cv": {
     "at_05": {

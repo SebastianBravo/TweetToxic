@@ -227,3 +227,6 @@ __marimo__/
 
 # VSCode
 .vscode/
+# Modelos entrenados: se regeneran ejecutando los notebooks (se versionan registry.csv, .json y parquet)
+models/*.joblib
+models/*.pt

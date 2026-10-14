@@ -1,6 +1,6 @@
 {
   "name": "V3__cnb",
-  "created": "2026-10-13T20:44:37",
+  "created": "2026-10-13T21:32:14",
   "variant": "V3",
   "variant_steps": {
     "artifacts": true,
@@ -15,8 +15,12 @@
     "restore": true,
     "lemma": false
   },
+  "features": "tfidf",
   "classifier": "cnb",
-  "classifier_params": "ComplementNB()",
+  "family": "bayes",
+  "clf_params": null,
+  "classifier_repr": "ComplementNB()",
+  "proba_calibrated": false,
   "thresholds": {
     "HS": 0.17,
     "TR": 0.07,
@@ -37,7 +41,9 @@
     "spacy": "3.8.16",
     "spacy_model": "es_core_news_sm",
     "seed": 42,
-    "git_commit": "760d98a"
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
   },
   "cv": {
     "at_05": {

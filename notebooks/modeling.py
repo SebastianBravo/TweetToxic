@@ -4,99 +4,255 @@ Un modelo completo es un único objeto `TweetToxicClassifier` que contiene:
 
     texto crudo
       -> TweetPreprocessor(variante)        (preprocessing.py; sin etiquetas)
-      -> ColumnTransformer de TF-IDF         (palabras 1-2, caracteres char_wb 2-5 y, en V4, lemas)
-      -> MultiOutputClassifier(clasificador) (un clasificador por etiqueta: HS, TR, AG)
+      -> representación (FEATURES)           TF-IDF de palabras/caracteres/lemas, SVD, rasgos hechos a mano
+      -> MultiOutputClassifier(clasificador) (un clasificador por etiqueta: HS, TR, AG; con selección chi2
+                                              opcional, calculada por etiqueta)
       -> umbrales por etiqueta + regla de jerarquía (si HS=0 entonces TR=0)
 
-Todo lo que se ajusta (diccionario de restauración, vocabularios TF-IDF, clasificadores) se ajusta en
-fit(), así que dentro de una validación cruzada se ajusta solo con el fold de entrenamiento.
+Todo lo que se ajusta (diccionario de restauración, vocabularios TF-IDF, SVD, chi2, razones de NB-SVM,
+clasificadores) se ajusta en fit(), así que dentro de una validación cruzada se ajusta solo con el fold
+de entrenamiento.
 
 Uso:
     model = TweetToxicClassifier(variant="V1", classifier="logreg").fit(train_texts, Y)
     save_model(model, "V1__logreg", metadata)          # models/V1__logreg.joblib + .json
     model = load_model("V1__logreg")                    # requiere notebooks/ en sys.path
     model.predict(test_texts)                           # array (n, 3) con HS, TR, AG
+    make_submission("V3__linsvm")                       # submissions/V3__linsvm.csv
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import platform
 import subprocess
 import time
+import warnings
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 import sklearn
-from sklearn.base import BaseEstimator, ClassifierMixin
+from joblib import Parallel, delayed
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import TruncatedSVD
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.metrics import f1_score
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.multioutput import MultiOutputClassifier
-from sklearn.naive_bayes import ComplementNB
+from sklearn.naive_bayes import BernoulliNB, ComplementNB, MultinomialNB
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.svm import LinearSVC
+from sklearn.preprocessing import MaxAbsScaler
+from sklearn.svm import SVC, LinearSVC
 from sklearn.utils.validation import check_is_fitted
 
+import handcrafted as hf
 import preprocessing as pp
-from common import LABELS, ROOT_DIR, SEED, evaluate_oof
+from common import DATA_DIR, LABELS, ROOT_DIR, SEED, _near_duplicate_key, evaluate_oof, load_test
 
 MODELS_DIR = ROOT_DIR / "models"
+SUBMISSIONS_DIR = ROOT_DIR / "submissions"
+REGISTRY_PATH = MODELS_DIR / "registry.csv"
+OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
+TEST_PRED_PATH = MODELS_DIR / "test_predictions.parquet"
 TOKEN_PATTERN = r"(?u)<\w+>|\b\w+\b"  # conserva <USER>, <URL> y palabras de una letra (t = tú, q = que)
 THRESHOLD_GRID = np.round(np.arange(0.05, 0.96, 0.01), 2)
+ESTIMATOR_N_JOBS = 2  # hilos por estimador de árboles/boosting (los folds se paralelizan aparte)
+SVD_COMPONENTS = 300
 
 
 # ---------------------------------------------------------------------------
-# Piezas del pipeline
+# Representación (features)
 # ---------------------------------------------------------------------------
-def make_features(variant: pp.Variant | str) -> ColumnTransformer:
-    """TF-IDF fijo (decisión D12): palabras 1-2 + caracteres char_wb 2-5 (+ lemas 1-2 si la variante lematiza).
+def _resolve(variant: pp.Variant | str) -> pp.Variant:
+    return pp.VARIANTS[variant] if isinstance(variant, str) else variant
 
-    lowercase=False: pasar o no a minúsculas lo decide el preprocesamiento, no el vectorizador.
-    """
-    variant = pp.VARIANTS[variant] if isinstance(variant, str) else variant
-    blocks = [
-        ("word", TfidfVectorizer(ngram_range=(1, 2), lowercase=False, token_pattern=TOKEN_PATTERN,
-                                 sublinear_tf=True), "text"),
-        ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), lowercase=False, sublinear_tf=True,
-                                 min_df=2), "text"),
-    ]
+
+def _text_blocks(variant: pp.Variant, use_char: bool) -> list:
+    blocks = [("word", TfidfVectorizer(ngram_range=(1, 2), lowercase=False, token_pattern=TOKEN_PATTERN,
+                                       sublinear_tf=True), "text")]
+    if use_char:
+        blocks.append(("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), lowercase=False,
+                                               sublinear_tf=True, min_df=2), "text"))
     if variant.lemma:
         blocks.append(("lemma", TfidfVectorizer(ngram_range=(1, 2), lowercase=False, token_pattern=TOKEN_PATTERN,
                                                 sublinear_tf=True), "lemmas"))
+    return blocks
+
+
+def make_features(variant: pp.Variant | str, features: str = "tfidf"):
+    """Representación del texto. `features` es una especificación con '+':
+
+    - base: 'tfidf' = palabras 1-2 + caracteres char_wb 2-5 (decisión D12); 'word' = solo palabras 1-2.
+      En V4 se añaden siempre los lemas (1-2).
+    - '+svd': reduce la base a SVD_COMPONENTS dimensiones densas (TruncatedSVD, sin etiquetas).
+    - '+hand': concatena los rasgos hechos a mano (features.py) calculados sobre el texto crudo,
+      escalados a [0, 1] con MaxAbsScaler.
+
+    lowercase=False: pasar o no a minúsculas lo decide el preprocesamiento, no el vectorizador.
+    """
+    variant = _resolve(variant)
+    parts = features.split("+")
+    base, use_svd, use_hand = parts[0], "svd" in parts, "hand" in parts
+    if base not in {"tfidf", "word"} or set(parts[1:]) - {"svd", "hand"}:
+        raise ValueError(f"Representación desconocida: {features}")
+    text_ct = ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))
+    if not use_svd and not use_hand:
+        return text_ct  # misma estructura que en el 03
+    text_cols = ["text"] + (["lemmas"] if variant.lemma else [])
+    text_part = (Pipeline([("tfidf", text_ct), ("svd", TruncatedSVD(SVD_COMPONENTS, random_state=SEED))])
+                 if use_svd else text_ct)
+    blocks = [("text", text_part, text_cols)]
+    if use_hand:
+        blocks.append(("hand", Pipeline([("rules", hf.HandcraftedFeatures()), ("scale", MaxAbsScaler())]), "raw"))
     return ColumnTransformer(blocks)
 
 
-def _logreg():
-    return LogisticRegression(class_weight="balanced", solver="liblinear", max_iter=2000, random_state=SEED)
+# ---------------------------------------------------------------------------
+# NB-SVM
+# ---------------------------------------------------------------------------
+class NBSVMClassifier(BaseEstimator, ClassifierMixin):
+    """NB-SVM (Wang y Manning, 2012) en su versión con regresión logística.
+
+    En fit() calcula, solo con los datos de entrenamiento, la razón log-count de Naive Bayes de cada
+    rasgo, r = log((p/|p|) / (q/|q|)), con p y q las sumas (más alpha) del rasgo en la clase positiva y
+    en la negativa. Después entrena una regresión logística sobre X escalada por r.
+    """
+
+    def __init__(self, C: float = 1.0, alpha: float = 1.0):
+        self.C = C
+        self.alpha = alpha
+
+    def _scale(self, X):
+        return sp.csr_matrix(sp.csr_matrix(X).multiply(self.r_))
+
+    def fit(self, X, y):
+        X = sp.csr_matrix(X)
+        y = np.asarray(y)
+        p = self.alpha + np.asarray(X[y == 1].sum(axis=0)).ravel()
+        q = self.alpha + np.asarray(X[y == 0].sum(axis=0)).ravel()
+        self.r_ = np.log((p / p.sum()) / (q / q.sum()))
+        self.lr_ = LogisticRegression(C=self.C, class_weight="balanced", solver="liblinear", max_iter=2000,
+                                      random_state=SEED).fit(self._scale(X), y)
+        self.classes_ = self.lr_.classes_
+        return self
+
+    def predict_proba(self, X):
+        return self.lr_.predict_proba(self._scale(X))
+
+    def predict(self, X):
+        return self.lr_.predict(self._scale(X))
 
 
-def _linsvm():
+# ---------------------------------------------------------------------------
+# Catálogo de clasificadores
+# ---------------------------------------------------------------------------
+def _logreg(C=1.0, l1_ratio=None):
+    """l1_ratio=None: L2 con liblinear (la del 03). l1_ratio en [0, 1]: saga (1 = L1, 0.5 = elasticnet)."""
+    if l1_ratio is None:
+        return LogisticRegression(C=C, class_weight="balanced", solver="liblinear", max_iter=2000, random_state=SEED)
+    return LogisticRegression(C=C, l1_ratio=l1_ratio, class_weight="balanced", solver="saga", max_iter=3000,
+                              tol=1e-3, random_state=SEED)
+
+
+def _linsvm(C=1.0):
     # LinearSVC no da probabilidades: se calibra con una sigmoide (validación interna de 3 folds).
-    return CalibratedClassifierCV(LinearSVC(class_weight="balanced", random_state=SEED), method="sigmoid", cv=3)
+    return CalibratedClassifierCV(LinearSVC(C=C, class_weight="balanced", random_state=SEED), method="sigmoid", cv=3)
 
 
-def _cnb():
-    return ComplementNB()
+def _rbfsvm(C=1.0, gamma="scale"):
+    return CalibratedClassifierCV(SVC(kernel="rbf", C=C, gamma=gamma, class_weight="balanced"), method="sigmoid", cv=3)
 
 
-# Clasificadores comparados, todos con sus hiperparámetros por defecto (no se ajustan aquí).
-CLASSIFIERS = {"logreg": _logreg, "linsvm": _linsvm, "cnb": _cnb}
-CLASSIFIER_NAMES = {"logreg": "Regresión logística (balanceada)", "linsvm": "SVM lineal calibrada (balanceada)",
-                    "cnb": "Complement Naive Bayes"}
+def _sgd(loss="modified_huber", alpha=1e-4):
+    return SGDClassifier(loss=loss, alpha=alpha, class_weight="balanced", max_iter=2000, tol=1e-4, random_state=SEED)
 
 
-def build_pipeline(variant: pp.Variant | str, classifier: str) -> Pipeline:
-    return Pipeline([
-        ("prep", pp.TweetPreprocessor(variant)),
-        ("features", make_features(variant)),
-        ("clf", MultiOutputClassifier(CLASSIFIERS[classifier]())),
-    ])
+def _rf(n_estimators=300, max_features="sqrt", min_samples_leaf=1):
+    return RandomForestClassifier(n_estimators=n_estimators, max_features=max_features,
+                                  min_samples_leaf=min_samples_leaf, class_weight="balanced_subsample",
+                                  n_jobs=ESTIMATOR_N_JOBS, random_state=SEED)
+
+
+def _et(n_estimators=300, max_features="sqrt", min_samples_leaf=1):
+    return ExtraTreesClassifier(n_estimators=n_estimators, max_features=max_features,
+                                min_samples_leaf=min_samples_leaf, class_weight="balanced_subsample",
+                                n_jobs=ESTIMATOR_N_JOBS, random_state=SEED)
+
+
+def _xgb(n_estimators=300, max_depth=4, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8):
+    from xgboost import XGBClassifier
+
+    return XGBClassifier(n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate,
+                         subsample=subsample, colsample_bytree=colsample_bytree, tree_method="hist",
+                         eval_metric="logloss", n_jobs=ESTIMATOR_N_JOBS, random_state=SEED)
+
+
+def _lgbm(n_estimators=300, num_leaves=15, learning_rate=0.05, min_child_samples=10, colsample_bytree=0.8):
+    from lightgbm import LGBMClassifier
+
+    return LGBMClassifier(n_estimators=n_estimators, num_leaves=num_leaves, learning_rate=learning_rate,
+                          min_child_samples=min_child_samples, colsample_bytree=colsample_bytree,
+                          subsample=0.8, subsample_freq=1, class_weight="balanced", n_jobs=ESTIMATOR_N_JOBS,
+                          random_state=SEED, deterministic=True, force_row_wise=True, verbose=-1)
+
+
+def _knn(n_neighbors=15):
+    return KNeighborsClassifier(n_neighbors=n_neighbors, metric="cosine", algorithm="brute", weights="distance")
+
+
+CLASSIFIERS = {
+    "logreg": _logreg, "sgd": _sgd, "linsvm": _linsvm, "nbsvm": NBSVMClassifier,
+    "mnb": MultinomialNB, "bnb": BernoulliNB, "cnb": ComplementNB, "knn": _knn,
+    "rbfsvm": _rbfsvm, "rf": _rf, "et": _et, "xgb": _xgb, "lgbm": _lgbm,
+}
+CLASSIFIER_NAMES = {
+    "logreg": "Regresión logística (balanceada)", "sgd": "SGDClassifier", "linsvm": "SVM lineal calibrada (balanceada)",
+    "nbsvm": "NB-SVM", "mnb": "Multinomial NB", "bnb": "Bernoulli NB", "cnb": "Complement Naive Bayes",
+    "knn": "kNN coseno", "rbfsvm": "SVM RBF calibrada", "rf": "Random Forest", "et": "ExtraTrees",
+    "xgb": "XGBoost", "lgbm": "LightGBM",
+}
+FAMILIES = {"logreg": "lineal", "sgd": "lineal", "linsvm": "lineal", "nbsvm": "lineal", "mnb": "bayes",
+            "bnb": "bayes", "cnb": "bayes", "knn": "vecinos", "rbfsvm": "kernel", "rf": "árboles", "et": "árboles",
+            "xgb": "boosting", "lgbm": "boosting"}
+# Probabilidades calibradas explícitamente (CalibratedClassifierCV con sigmoide). El resto son puntuaciones
+# en [0, 1] no calibradas; la regresión logística y NB-SVM están razonablemente calibradas por construcción,
+# pero class_weight="balanced" las desplaza hacia la clase positiva.
+CALIBRATED = {"linsvm", "rbfsvm"}
+
+
+def make_classifier(classifier: str, clf_params: dict | None = None):
+    """Clasificador de una etiqueta. clf_params puede incluir 'select_k': selección chi2 de los k mejores
+    rasgos para esa etiqueta, calculada en fit() (dentro del fold)."""
+    params = dict(clf_params or {})
+    select_k = params.pop("select_k", None)
+    clf = CLASSIFIERS[classifier](**params)
+    if select_k:
+        return Pipeline([("chi2", SelectKBest(chi2, k=select_k)), ("model", clf)])
+    return clf
+
+
+def build_featurizer(variant: pp.Variant | str, features: str = "tfidf") -> Pipeline:
+    keep_raw = "hand" in features.split("+")
+    return Pipeline([("prep", pp.TweetPreprocessor(variant, keep_raw=keep_raw)),
+                     ("features", make_features(variant, features))])
+
+
+def build_pipeline(variant: pp.Variant | str, classifier: str, features: str = "tfidf",
+                   clf_params: dict | None = None) -> Pipeline:
+    featurizer = build_featurizer(variant, features)
+    return Pipeline(featurizer.steps + [("clf", MultiOutputClassifier(make_classifier(classifier, clf_params)))])
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +279,12 @@ def best_thresholds(y_true: np.ndarray, proba: np.ndarray, grid=THRESHOLD_GRID) 
     return out
 
 
+def tuned_macro(y_true: np.ndarray, proba: np.ndarray, hierarchy: bool = True) -> float:
+    """F1 macro con el umbral óptimo de cada etiqueta sobre esas mismas predicciones (para comparar
+    configuraciones dentro de la CV interna; es optimista, pero igual para todas)."""
+    return evaluate_oof(y_true, apply_decision(proba, best_thresholds(y_true, proba), hierarchy), 0.5)["F1_macro"]
+
+
 # ---------------------------------------------------------------------------
 # Modelo completo
 # ---------------------------------------------------------------------------
@@ -130,7 +292,9 @@ class TweetToxicClassifier(BaseEstimator, ClassifierMixin):
     """Modelo multietiqueta completo: texto crudo -> HS, TR, AG.
 
     - variant: variante de preprocesamiento (ver preprocessing.VARIANTS).
-    - classifier: clave de CLASSIFIERS ('logreg', 'linsvm', 'cnb').
+    - classifier: clave de CLASSIFIERS.
+    - features: representación (ver make_features): 'tfidf', 'word', '+svd', '+hand'.
+    - clf_params: hiperparámetros del clasificador (incluido 'select_k' para chi2).
     - thresholds: umbral por etiqueta (dict) o un número; no afecta a fit().
     - hierarchy: aplicar la regla HS=0 -> TR=0 en predict().
     - empty_as_negative: los tuits sin texto real (p. ej. la celda '#¿NOMBRE?' del test) se
@@ -138,21 +302,26 @@ class TweetToxicClassifier(BaseEstimator, ClassifierMixin):
     """
 
     def __init__(self, variant: str = "V1", classifier: str = "logreg", thresholds=0.5, hierarchy: bool = True,
-                 empty_as_negative: bool = True):
+                 empty_as_negative: bool = True, features: str = "tfidf", clf_params: dict | None = None):
         self.variant = variant
         self.classifier = classifier
         self.thresholds = thresholds
         self.hierarchy = hierarchy
         self.empty_as_negative = empty_as_negative
+        self.features = features
+        self.clf_params = clf_params
 
     def fit(self, X, y):
         y = np.asarray(y)
-        self.pipeline_ = build_pipeline(self.variant, self.classifier).fit(X, y)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            self.pipeline_ = build_pipeline(self.variant, self.classifier, getattr(self, "features", "tfidf"),
+                                            getattr(self, "clf_params", None)).fit(X, y)
         self.labels_ = list(LABELS)
         return self
 
     def predict_proba(self, X) -> np.ndarray:
-        """Probabilidad de la clase positiva de cada etiqueta: array (n, 3) en el orden HS, TR, AG."""
+        """Probabilidad (o puntuación en [0, 1]) de la clase positiva de cada etiqueta: (n, 3) en el orden HS, TR, AG."""
         check_is_fitted(self, "pipeline_")
         return np.column_stack([p[:, 1] for p in self.pipeline_.predict_proba(X)])
 
@@ -168,41 +337,118 @@ class TweetToxicClassifier(BaseEstimator, ClassifierMixin):
 # ---------------------------------------------------------------------------
 # Validación cruzada con los folds compartidos
 # ---------------------------------------------------------------------------
-def cross_validate(model: TweetToxicClassifier, texts: pd.Series, Y: np.ndarray, folds: pd.Series) -> dict:
-    """CV con los folds de common.make_folds. Todo (preprocesamiento, TF-IDF, clasificador) se ajusta
-    solo con el fold de entrenamiento.
+def _fit_predict_fold(model, texts, Y, trn, val):
+    fitted = clone(model).fit(texts[trn], Y[trn])
+    return fitted.predict_proba(texts[val])
+
+
+def _summarize_folds(oof: np.ndarray, Y: np.ndarray, folds: pd.Series, hierarchy: bool = True) -> tuple:
+    at_05, tuned = [], []
+    for k in sorted(folds.unique()):
+        val = (folds == k).to_numpy()
+        at_05.append(evaluate_oof(Y[val], oof[val], 0.5))
+        thr = best_thresholds(Y[~val], oof[~val])  # umbral elegido sin mirar el fold k
+        tuned.append(evaluate_oof(Y[val], apply_decision(oof[val], thr, hierarchy=hierarchy), 0.5))
+    return pd.DataFrame(at_05), pd.DataFrame(tuned)
+
+
+def cross_validate(model: TweetToxicClassifier, texts: pd.Series, Y: np.ndarray, folds: pd.Series,
+                   n_jobs: int = 1) -> dict:
+    """CV con los folds de common.make_folds. Todo (preprocesamiento, representación, clasificador) se
+    ajusta solo con el fold de entrenamiento. n_jobs > 1 reparte los folds entre procesos.
 
     Devuelve:
     - oof: probabilidades out-of-fold (n, 3);
     - at_05: métricas por fold con umbral 0.5 y sin jerarquía;
     - tuned: métricas por fold con umbral elegido en las OOF de los OTROS folds y con jerarquía
       (estimación casi honesta del modelo final);
-    - fit_seconds: tiempo total.
+    - fit_seconds: tiempo total (de reloj).
     """
     texts = pd.Series(texts).reset_index(drop=True)
     folds = pd.Series(folds).reset_index(drop=True)
     oof = np.zeros(Y.shape)
+    ks = sorted(folds.unique())
     start = time.perf_counter()
-    for k in sorted(folds.unique()):
-        trn, val = (folds != k).to_numpy(), (folds == k).to_numpy()
-        fitted = sklearn.base.clone(model).fit(texts[trn], Y[trn])
-        oof[val] = fitted.predict_proba(texts[val])
+    probas = Parallel(n_jobs=n_jobs)(
+        delayed(_fit_predict_fold)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy()) for k in ks)
+    for k, p in zip(ks, probas):
+        oof[(folds == k).to_numpy()] = p
     seconds = time.perf_counter() - start
+    at_05, tuned = _summarize_folds(oof, Y, folds, model.hierarchy)
+    return {"oof": oof, "at_05": at_05, "tuned": tuned, "fit_seconds": seconds}
 
-    at_05, tuned = [], []
-    for k in sorted(folds.unique()):
-        val = (folds == k).to_numpy()
-        at_05.append(evaluate_oof(Y[val], oof[val], 0.5))
-        thr = best_thresholds(Y[~val], oof[~val])  # umbral elegido sin mirar el fold k
-        tuned.append(evaluate_oof(Y[val], apply_decision(oof[val], thr, hierarchy=model.hierarchy), 0.5))
-    return {"oof": oof, "at_05": pd.DataFrame(at_05), "tuned": pd.DataFrame(tuned), "fit_seconds": seconds}
+
+def _inner_splits(texts: pd.Series, Y: np.ndarray, n_splits: int = 3):
+    combo = pd.Series(["".join(map(str, row)) for row in Y])
+    groups = texts.map(_near_duplicate_key)
+    return list(StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED).split(texts, combo, groups))
+
+
+def select_params(variant, classifier, features, grid: list[dict], texts: pd.Series, Y: np.ndarray,
+                  n_splits: int = 3) -> tuple[dict, pd.DataFrame]:
+    """Elige hiperparámetros con una CV de n_splits folds sobre (texts, Y).
+
+    La representación (preprocesamiento + TF-IDF/SVD/rasgos) se ajusta una vez por fold interno y se
+    reutiliza para todas las configuraciones del clasificador. Criterio: F1 macro con umbral óptimo y
+    jerarquía sobre las OOF internas (igual de optimista para todas las configuraciones).
+    """
+    texts = pd.Series(texts).reset_index(drop=True)
+    inner_oof = {i: np.zeros(Y.shape) for i in range(len(grid))}
+    for trn, val in _inner_splits(texts, Y, n_splits):
+        featurizer = build_featurizer(variant, features).fit(texts[trn], Y[trn])
+        X_trn, X_val = featurizer.transform(texts[trn]), featurizer.transform(texts[val])
+        for i, params in enumerate(grid):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ConvergenceWarning)
+                clf = MultiOutputClassifier(make_classifier(classifier, params)).fit(X_trn, Y[trn])
+            inner_oof[i][val] = np.column_stack([p[:, 1] for p in clf.predict_proba(X_val)])
+    scores = pd.DataFrame({"params": [json.dumps(g, sort_keys=True) for g in grid],
+                           "macro_interno": [tuned_macro(Y, inner_oof[i]) for i in range(len(grid))]})
+    best = int(scores["macro_interno"].idxmax())
+    return grid[best], scores
+
+
+def _nested_fold(variant, classifier, features, grid, texts, Y, trn, val, inner_splits):
+    best, _scores = select_params(variant, classifier, features, grid, texts[trn].reset_index(drop=True), Y[trn],
+                                 inner_splits)
+    model = TweetToxicClassifier(variant=variant, classifier=classifier, features=features, clf_params=best)
+    return model.fit(texts[trn], Y[trn]).predict_proba(texts[val]), best
+
+
+def nested_cross_validate(variant, classifier, features, grid: list[dict], texts: pd.Series, Y: np.ndarray,
+                          folds: pd.Series, inner_splits: int = 3, n_jobs: int = 1) -> dict:
+    """CV anidada: en cada fold externo, una CV interna de `inner_splits` folds (solo con los datos de
+    entrenamiento de ese fold) elige los hiperparámetros; el fold externo solo mide.
+
+    Devuelve lo mismo que cross_validate más `params_per_fold` (la configuración elegida en cada fold).
+    """
+    texts = pd.Series(texts).reset_index(drop=True)
+    folds = pd.Series(folds).reset_index(drop=True)
+    ks = sorted(folds.unique())
+    start = time.perf_counter()
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_nested_fold)(variant, classifier, features, grid, texts, Y, (folds != k).to_numpy(),
+                              (folds == k).to_numpy(), inner_splits) for k in ks)
+    oof = np.zeros(Y.shape)
+    for k, (p, _) in zip(ks, results):
+        oof[(folds == k).to_numpy()] = p
+    seconds = time.perf_counter() - start
+    at_05, tuned = _summarize_folds(oof, Y, folds, hierarchy=True)
+    return {"oof": oof, "at_05": at_05, "tuned": tuned, "fit_seconds": seconds,
+            "params_per_fold": [best for _, best in results]}
 
 
 # ---------------------------------------------------------------------------
-# Guardado y carga
+# Guardado, registro y predicciones
 # ---------------------------------------------------------------------------
-def model_name(variant: str, classifier: str) -> str:
-    return f"{pp.variant_slug(variant)}__{classifier}"
+def model_name(variant: str, classifier: str, features: str = "tfidf", tag: str | None = None) -> str:
+    """'V3__linsvm' (como en el 03); con otra representación o etiqueta: 'V3__rf__word+svd', 'V3__linsvm__tfidf+hand'."""
+    name = f"{pp.variant_slug(variant)}__{classifier}"
+    if features != "tfidf":
+        name += f"__{features}"
+    if tag:
+        name += f"__{tag}"
+    return name
 
 
 def _git_commit() -> str | None:
@@ -216,9 +462,21 @@ def _git_commit() -> str | None:
 def environment_info() -> dict:
     import spacy
 
-    return {"python": platform.python_version(), "scikit-learn": sklearn.__version__, "numpy": np.__version__,
+    info = {"python": platform.python_version(), "scikit-learn": sklearn.__version__, "numpy": np.__version__,
             "pandas": pd.__version__, "spacy": spacy.__version__, "spacy_model": f"{pp.SPACY_MODEL}",
             "seed": SEED, "git_commit": _git_commit()}
+    for lib in ("xgboost", "lightgbm"):
+        try:
+            info[lib] = __import__(lib).__version__
+        except Exception:
+            pass
+    return info
+
+
+def model_size_mb(model) -> float:
+    buffer = io.BytesIO()
+    joblib.dump(model, buffer, compress=3)
+    return buffer.tell() / 1e6
 
 
 def save_model(model: TweetToxicClassifier, name: str, metadata: dict | None = None,
@@ -228,9 +486,13 @@ def save_model(model: TweetToxicClassifier, name: str, metadata: dict | None = N
     models_dir.mkdir(parents=True, exist_ok=True)
     path = models_dir / f"{name}.joblib"
     joblib.dump(model, path, compress=3)
+    features = getattr(model, "features", "tfidf")
     meta = {"name": name, "created": dt.datetime.now().isoformat(timespec="seconds"),
             "variant": model.variant, "variant_steps": pp.VARIANTS[model.variant].steps(),
-            "classifier": model.classifier, "classifier_params": repr(CLASSIFIERS[model.classifier]()),
+            "features": features, "classifier": model.classifier, "family": FAMILIES[model.classifier],
+            "clf_params": getattr(model, "clf_params", None),
+            "classifier_repr": repr(make_classifier(model.classifier, getattr(model, "clf_params", None))),
+            "proba_calibrated": model.classifier in CALIBRATED,
             "thresholds": model.thresholds, "hierarchy": model.hierarchy,
             "empty_as_negative": model.empty_as_negative, "labels": LABELS,
             "environment": environment_info(), **(metadata or {})}
@@ -239,8 +501,97 @@ def save_model(model: TweetToxicClassifier, name: str, metadata: dict | None = N
 
 
 def load_model(name_or_path, models_dir: Path = MODELS_DIR) -> TweetToxicClassifier:
-    """Carga un modelo guardado. Necesita que notebooks/ esté en sys.path (por preprocessing/modeling)."""
+    """Carga un modelo guardado. Necesita que notebooks/ esté en sys.path (por preprocessing/modeling/features)."""
     path = Path(name_or_path)
     if not path.suffix:
         path = Path(models_dir) / f"{name_or_path}.joblib"
     return joblib.load(path)
+
+
+REGISTRY_COLUMNS = ["model_id", "family", "classifier", "variant", "features", "params", "notebook",
+                    "F1_macro", "F1_macro_std", "F1_micro", "F1_HS", "F1_TR", "F1_AG",
+                    "thr_HS", "thr_TR", "thr_AG", "proba_calibrated", "cv_seconds", "size_mb", "saved"]
+
+
+def registry_row(model_id: str, model: TweetToxicClassifier, cv: dict, notebook: str, saved: bool,
+                 size_mb: float | None = None) -> dict:
+    t = cv["tuned"]
+    thr = model.thresholds if isinstance(model.thresholds, dict) else {lab: model.thresholds for lab in LABELS}
+    return {"model_id": model_id, "family": FAMILIES[model.classifier], "classifier": model.classifier,
+            "variant": model.variant, "features": getattr(model, "features", "tfidf"),
+            "params": json.dumps(getattr(model, "clf_params", None) or {}, sort_keys=True), "notebook": notebook,
+            "F1_macro": round(t["F1_macro"].mean(), 4), "F1_macro_std": round(t["F1_macro"].std(), 4),
+            "F1_micro": round(t["F1_micro"].mean(), 4),
+            **{f"F1_{lab}": round(t[f"F1_{lab}"].mean(), 4) for lab in LABELS},
+            **{f"thr_{lab}": thr[lab] for lab in LABELS},
+            "proba_calibrated": model.classifier in CALIBRATED, "cv_seconds": round(cv["fit_seconds"], 1),
+            "size_mb": None if size_mb is None else round(size_mb, 2), "saved": saved}
+
+
+def _upsert(path: Path, new: pd.DataFrame, key: str, required: list[str]) -> pd.DataFrame:
+    if path.exists():
+        old = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path, dtype={"notebook": str})
+        if "notebook" in old.columns:  # '03' se guarda como texto; versiones antiguas lo leían como 3
+            old["notebook"] = old["notebook"].astype(str).str.zfill(2)
+        if set(required) <= set(old.columns):  # descarta archivos con el formato anterior
+            new = pd.concat([old[~old[key].isin(new[key].unique())], new], ignore_index=True)
+    return new
+
+
+def update_registry(rows: list[dict], path: Path = REGISTRY_PATH) -> pd.DataFrame:
+    """Añade o reemplaza filas (por model_id) en models/registry.csv."""
+    reg = _upsert(path, pd.DataFrame(rows)[REGISTRY_COLUMNS], "model_id", REGISTRY_COLUMNS)
+    reg = reg.sort_values(["F1_macro", "model_id"], ascending=[False, True]).reset_index(drop=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    reg.to_csv(path, index=False)
+    return reg
+
+
+def prediction_frame(model_id: str, ids, proba: np.ndarray, fold=None, pred: np.ndarray | None = None,
+                     calibrated: bool = False) -> pd.DataFrame:
+    """Formato común de predicciones: model_id, id, fold, p_HS, p_TR, p_AG, calibrated (+ HS, TR, AG en test)."""
+    df = pd.DataFrame({"model_id": model_id, "id": np.asarray(ids),
+                       "fold": -1 if fold is None else np.asarray(fold),
+                       **{f"p_{lab}": proba[:, j] for j, lab in enumerate(LABELS)}, "calibrated": calibrated})
+    if pred is not None:
+        for j, lab in enumerate(LABELS):
+            df[lab] = pred[:, j].astype(int)
+    return df
+
+
+def update_predictions(frames: list[pd.DataFrame], path: Path) -> pd.DataFrame:
+    """Añade o reemplaza (por model_id) predicciones en un parquet compartido."""
+    required = ["model_id", "id", "fold", "p_HS", "p_TR", "p_AG", "calibrated"]
+    out = _upsert(path, pd.concat(frames, ignore_index=True), "model_id", required)
+    out = out.sort_values(["model_id", "id"]).reset_index(drop=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_parquet(path, index=False)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Envío a Kaggle
+# ---------------------------------------------------------------------------
+def make_submission(model_id: str, out_dir: Path = SUBMISSIONS_DIR) -> Path:
+    """Carga models/<model_id>.joblib, predice sobre el texto crudo de data/toxic_test.csv y escribe
+    submissions/<model_id>.csv con columnas id,HS,TR,AG (enteros 0/1). Verifica el archivo antes de escribirlo."""
+    test = load_test()
+    if test is None:
+        raise FileNotFoundError("No existe data/toxic_test.csv")
+    pred = load_model(model_id).predict(test["text"])
+    sub = pd.DataFrame({"id": test["id"].to_numpy(), **{lab: pred[:, j].astype(int) for j, lab in enumerate(LABELS)}})
+
+    assert len(sub) == len(test), "número de filas distinto al del test"
+    assert (sub["id"].to_numpy() == test["id"].to_numpy()).all(), "ids distintos o en otro orden"
+    assert not sub.isna().any().any(), "hay valores nulos"
+    assert set(np.unique(sub[LABELS].to_numpy())) <= {0, 1}, "etiquetas fuera de {0, 1}"
+    samples = sorted(p for p in DATA_DIR.glob("*.csv") if "sample" in p.name.lower() or "submission" in p.name.lower())
+    if samples:
+        sample_cols = list(pd.read_csv(samples[0], sep=None, engine="python", nrows=1).columns)
+        assert list(sub.columns) == sample_cols, f"columnas {list(sub.columns)} != {sample_cols} ({samples[0].name})"
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{model_id}.csv"
+    sub.to_csv(path, index=False)
+    return path

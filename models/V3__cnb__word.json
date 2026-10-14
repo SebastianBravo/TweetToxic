@@ -1,0 +1,101 @@
+{
+  "name": "V3__cnb__word",
+  "created": "2026-10-13T23:39:06",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "features": "word",
+  "classifier": "cnb",
+  "family": "bayes",
+  "clf_params": null,
+  "classifier_repr": "ComplementNB()",
+  "proba_calibrated": false,
+  "thresholds": {
+    "HS": 0.4,
+    "TR": 0.34,
+    "AG": 0.39
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "5afb50a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "04",
+  "stage": "cribado",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.69182231435352,
+        "std": 0.02835653858105235
+      },
+      "F1_TR": {
+        "mean": 0.7223952478189846,
+        "std": 0.05960518607364882
+      },
+      "F1_AG": {
+        "mean": 0.6509990623416826,
+        "std": 0.042792261355707836
+      },
+      "F1_macro": {
+        "mean": 0.6884055415047291,
+        "std": 0.04031973722170751
+      },
+      "F1_micro": {
+        "mean": 0.6867588803731695,
+        "std": 0.03830877143712823
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7348210843236673,
+        "std": 0.02684711194872388
+      },
+      "F1_TR": {
+        "mean": 0.7681404661771422,
+        "std": 0.03558941573810539
+      },
+      "F1_AG": {
+        "mean": 0.6935736418343496,
+        "std": 0.023809462934328892
+      },
+      "F1_macro": {
+        "mean": 0.732178397445053,
+        "std": 0.025951003663925522
+      },
+      "F1_micro": {
+        "mean": 0.730060200665795,
+        "std": 0.02502492483893273
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "grid": null,
+  "params_per_fold": null
+}
