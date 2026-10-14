@@ -1,0 +1,19 @@
+modelo,variante,clasificador,macro ajustado (CV),desv.,micro ajustado (CV),umbral HS,umbral TR,umbral AG,archivo,MB
+V3__linsvm,V3,linsvm,0.7817,0.016,0.7781,0.46,0.4,0.44,V3__linsvm.joblib,2.05
+V4__linsvm,V4,linsvm,0.7807,0.0202,0.7771,0.37,0.38,0.39,V4__linsvm.joblib,2.87
+V2-alarg1__linsvm,V2 (alarg.=1),linsvm,0.7782,0.0222,0.775,0.43,0.42,0.4,V2-alarg1__linsvm.joblib,2.06
+V2__linsvm,V2,linsvm,0.7776,0.0199,0.7742,0.43,0.4,0.4,V2__linsvm.joblib,2.07
+V1__linsvm,V1,linsvm,0.7756,0.0223,0.7716,0.4,0.38,0.41,V1__linsvm.joblib,2.08
+V3__logreg,V3,logreg,0.7744,0.0196,0.7721,0.46,0.47,0.45,V3__logreg.joblib,0.99
+V1__logreg,V1,logreg,0.772,0.0178,0.7692,0.45,0.47,0.45,V1__logreg.joblib,1.0
+V4__logreg,V4,logreg,0.7709,0.0174,0.7678,0.47,0.47,0.44,V4__logreg.joblib,1.43
+V2-alarg1__logreg,V2 (alarg.=1),logreg,0.7687,0.0208,0.7656,0.45,0.49,0.45,V2-alarg1__logreg.joblib,0.99
+V2__logreg,V2,logreg,0.7679,0.0192,0.7652,0.44,0.48,0.44,V2__logreg.joblib,1.0
+V0__linsvm,V0,linsvm,0.7663,0.0077,0.7638,0.35,0.37,0.35,V0__linsvm.joblib,2.86
+V0__logreg,V0,logreg,0.7498,0.0159,0.7472,0.41,0.45,0.42,V0__logreg.joblib,1.37
+V1__cnb,V1,cnb,0.7274,0.0181,0.7271,0.15,0.1,0.09,V1__cnb.joblib,2.95
+V3__cnb,V3,cnb,0.7244,0.0274,0.7238,0.17,0.07,0.1,V3__cnb.joblib,2.9
+V4__cnb,V4,cnb,0.721,0.0232,0.722,0.12,0.05,0.05,V4__cnb.joblib,4.02
+V2__cnb,V2,cnb,0.7172,0.0238,0.7175,0.15,0.11,0.09,V2__cnb.joblib,2.92
+V2-alarg1__cnb,V2 (alarg.=1),cnb,0.7153,0.0241,0.7161,0.16,0.11,0.09,V2-alarg1__cnb.joblib,2.92
+V0__cnb,V0,cnb,0.6989,0.0332,0.6995,0.15,0.05,0.09,V0__cnb.joblib,4.03

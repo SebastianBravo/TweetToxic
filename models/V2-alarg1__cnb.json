@@ -1,0 +1,91 @@
+{
+  "name": "V2-alarg1__cnb",
+  "created": "2026-10-13T20:44:35",
+  "variant": "V2 (alarg.=1)",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 1,
+    "laughs": true,
+    "censor": true,
+    "restore": false,
+    "lemma": false
+  },
+  "classifier": "cnb",
+  "classifier_params": "ComplementNB()",
+  "thresholds": {
+    "HS": 0.16,
+    "TR": 0.11,
+    "AG": 0.09
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.6483347481863533,
+        "std": 0.03804140430797161
+      },
+      "F1_TR": {
+        "mean": 0.6032740031268881,
+        "std": 0.029800707177812677
+      },
+      "F1_AG": {
+        "mean": 0.5830828942974542,
+        "std": 0.038152489168842486
+      },
+      "F1_macro": {
+        "mean": 0.6115638818702318,
+        "std": 0.03110467551069417
+      },
+      "F1_micro": {
+        "mean": 0.6151852102840627,
+        "std": 0.03199500478930218
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7288579655829739,
+        "std": 0.027086298794243888
+      },
+      "F1_TR": {
+        "mean": 0.7209892117791634,
+        "std": 0.054606024745672124
+      },
+      "F1_AG": {
+        "mean": 0.6961363016006581,
+        "std": 0.02045254314063269
+      },
+      "F1_macro": {
+        "mean": 0.7153278263209318,
+        "std": 0.024075577495648395
+      },
+      "F1_micro": {
+        "mean": 0.7160536196942594,
+        "std": 0.02199434481091122
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

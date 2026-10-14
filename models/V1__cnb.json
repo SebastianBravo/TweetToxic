@@ -1,0 +1,91 @@
+{
+  "name": "V1__cnb",
+  "created": "2026-10-13T20:44:31",
+  "variant": "V1",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 0,
+    "laughs": false,
+    "censor": false,
+    "restore": false,
+    "lemma": false
+  },
+  "classifier": "cnb",
+  "classifier_params": "ComplementNB()",
+  "thresholds": {
+    "HS": 0.15,
+    "TR": 0.1,
+    "AG": 0.09
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.6523631128711156,
+        "std": 0.027808315192489347
+      },
+      "F1_TR": {
+        "mean": 0.6036513705188489,
+        "std": 0.03330977361256551
+      },
+      "F1_AG": {
+        "mean": 0.5823404559514451,
+        "std": 0.03912439393171125
+      },
+      "F1_macro": {
+        "mean": 0.6127849797804699,
+        "std": 0.031184805128048866
+      },
+      "F1_micro": {
+        "mean": 0.6167179687957254,
+        "std": 0.03059859101957488
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7374726411870823,
+        "std": 0.026834037580060678
+      },
+      "F1_TR": {
+        "mean": 0.740429487157331,
+        "std": 0.048169274734060914
+      },
+      "F1_AG": {
+        "mean": 0.7042403957266755,
+        "std": 0.017169384154156513
+      },
+      "F1_macro": {
+        "mean": 0.7273808413570295,
+        "std": 0.018067805301258757
+      },
+      "F1_micro": {
+        "mean": 0.7271443213378459,
+        "std": 0.01619754317771665
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

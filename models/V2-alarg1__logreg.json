@@ -1,0 +1,91 @@
+{
+  "name": "V2-alarg1__logreg",
+  "created": "2026-10-13T20:44:34",
+  "variant": "V2 (alarg.=1)",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 1,
+    "laughs": true,
+    "censor": true,
+    "restore": false,
+    "lemma": false
+  },
+  "classifier": "logreg",
+  "classifier_params": "LogisticRegression(class_weight='balanced', max_iter=2000, random_state=42,\n                   solver='liblinear')",
+  "thresholds": {
+    "HS": 0.45,
+    "TR": 0.49,
+    "AG": 0.45
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.7597775627843053,
+        "std": 0.02551409583170112
+      },
+      "F1_TR": {
+        "mean": 0.7961810555649018,
+        "std": 0.03946902929248296
+      },
+      "F1_AG": {
+        "mean": 0.7310716640616632,
+        "std": 0.027220374110685647
+      },
+      "F1_macro": {
+        "mean": 0.7623434274702902,
+        "std": 0.029523699720179004
+      },
+      "F1_micro": {
+        "mean": 0.7604350542739405,
+        "std": 0.028751756850001194
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7681733229528168,
+        "std": 0.026114087869772495
+      },
+      "F1_TR": {
+        "mean": 0.8029824189858397,
+        "std": 0.034320380015578154
+      },
+      "F1_AG": {
+        "mean": 0.7348737834681197,
+        "std": 0.0190783409196975
+      },
+      "F1_macro": {
+        "mean": 0.7686765084689254,
+        "std": 0.020765948830986126
+      },
+      "F1_micro": {
+        "mean": 0.7655554815800603,
+        "std": 0.020216008401007395
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

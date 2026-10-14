@@ -1,0 +1,91 @@
+{
+  "name": "V4__linsvm",
+  "created": "2026-10-13T20:44:39",
+  "variant": "V4",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": true
+  },
+  "classifier": "linsvm",
+  "classifier_params": "CalibratedClassifierCV(cv=3,\n                       estimator=LinearSVC(class_weight='balanced',\n                                           random_state=42))",
+  "thresholds": {
+    "HS": 0.37,
+    "TR": 0.38,
+    "AG": 0.39
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.772062841269926,
+        "std": 0.03515289907076017
+      },
+      "F1_TR": {
+        "mean": 0.8182631389078757,
+        "std": 0.030965037034865476
+      },
+      "F1_AG": {
+        "mean": 0.7340824903446662,
+        "std": 0.031676558914686244
+      },
+      "F1_macro": {
+        "mean": 0.7748028235074893,
+        "std": 0.03048440348798145
+      },
+      "F1_micro": {
+        "mean": 0.7720532864088167,
+        "std": 0.030743692711746984
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7730666712392568,
+        "std": 0.028910380355468775
+      },
+      "F1_TR": {
+        "mean": 0.8194089596942218,
+        "std": 0.025621596261354608
+      },
+      "F1_AG": {
+        "mean": 0.7496171827115552,
+        "std": 0.02312148460186924
+      },
+      "F1_macro": {
+        "mean": 0.7806976045483446,
+        "std": 0.020185570688991517
+      },
+      "F1_micro": {
+        "mean": 0.7770577220565479,
+        "std": 0.020502404083787343
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

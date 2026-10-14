@@ -1,0 +1,91 @@
+{
+  "name": "V0__cnb",
+  "created": "2026-10-13T20:44:29",
+  "variant": "V0",
+  "variant_steps": {
+    "artifacts": false,
+    "users": false,
+    "urls": false,
+    "hashtags": false,
+    "rt": false,
+    "lower": false,
+    "elong": 0,
+    "laughs": false,
+    "censor": false,
+    "restore": false,
+    "lemma": false
+  },
+  "classifier": "cnb",
+  "classifier_params": "ComplementNB()",
+  "thresholds": {
+    "HS": 0.15,
+    "TR": 0.05,
+    "AG": 0.09
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.5806460997178752,
+        "std": 0.039526436076839214
+      },
+      "F1_TR": {
+        "mean": 0.4925951695123591,
+        "std": 0.035826394692641775
+      },
+      "F1_AG": {
+        "mean": 0.48764798697002093,
+        "std": 0.02227629961218826
+      },
+      "F1_macro": {
+        "mean": 0.5202964187334185,
+        "std": 0.026508862349337615
+      },
+      "F1_micro": {
+        "mean": 0.5272183754904238,
+        "std": 0.027977760691037006
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7184525781808894,
+        "std": 0.027682189554447595
+      },
+      "F1_TR": {
+        "mean": 0.7174291306282491,
+        "std": 0.0517841271908503
+      },
+      "F1_AG": {
+        "mean": 0.6607912159729029,
+        "std": 0.03482400027530743
+      },
+      "F1_macro": {
+        "mean": 0.6988909749273472,
+        "std": 0.03324278470202077
+      },
+      "F1_micro": {
+        "mean": 0.699458240471067,
+        "std": 0.030960977183195574
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

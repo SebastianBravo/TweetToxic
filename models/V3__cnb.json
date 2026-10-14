@@ -1,0 +1,91 @@
+{
+  "name": "V3__cnb",
+  "created": "2026-10-13T20:44:37",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "classifier": "cnb",
+  "classifier_params": "ComplementNB()",
+  "thresholds": {
+    "HS": 0.17,
+    "TR": 0.07,
+    "AG": 0.1
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "760d98a"
+  },
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.6515044821330702,
+        "std": 0.037097242418470545
+      },
+      "F1_TR": {
+        "mean": 0.6077096076614149,
+        "std": 0.03327476552134651
+      },
+      "F1_AG": {
+        "mean": 0.5830078543852414,
+        "std": 0.049515287275734086
+      },
+      "F1_macro": {
+        "mean": 0.6140739813932423,
+        "std": 0.037326431816788685
+      },
+      "F1_micro": {
+        "mean": 0.6175243760946711,
+        "std": 0.03753655154176635
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7350392201869477,
+        "std": 0.03412058172309344
+      },
+      "F1_TR": {
+        "mean": 0.743076115194265,
+        "std": 0.049773747413827577
+      },
+      "F1_AG": {
+        "mean": 0.6951718762372096,
+        "std": 0.02429690290665549
+      },
+      "F1_macro": {
+        "mean": 0.7244290705394741,
+        "std": 0.02735482349140698
+      },
+      "F1_micro": {
+        "mean": 0.723783752166016,
+        "std": 0.0264237056666387
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

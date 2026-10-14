@@ -9,6 +9,8 @@ Funciones puras (sin estado global mutable), en el orden en que se aplican:
     e) restore_damaged_words   (diccionario construido con build_restore_dict, sin etiquetas)
     f) lemmatize               (spaCy: solo lemma_, pos_ y morph; corrección con LEMMA_FIXES)
     g) apply_variant / build_views
+    h) TweetPreprocessor: transformer de scikit-learn que aplica una variante completa, para
+       usarlo dentro de un Pipeline y guardarlo junto al modelo (joblib)
 
 Ningún paso usa etiquetas. Todos los diccionarios de este módulo son de elaboración propia
 (ver la celda "Recursos externos" de 02_preprocesamiento.ipynb).
@@ -23,6 +25,8 @@ from dataclasses import asdict, dataclass, replace
 from typing import Iterable
 
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
 
 USER_TOKEN = "<USER>"
 URL_TOKEN = "<URL>"
@@ -262,6 +266,17 @@ def load_spacy():
     return nlp
 
 
+_NLP = None
+
+
+def get_nlp():
+    """spaCy cargado una sola vez por proceso (cargarlo cuesta ~0.5 s)."""
+    global _NLP
+    if _NLP is None:
+        _NLP = load_spacy()
+    return _NLP
+
+
 def lemmatize(texts: Iterable[str], nlp=None, keep_second_person: bool = True, batch_size: int = 64) -> list[str]:
     """Paso f: devuelve, por texto, la secuencia de lemas de sus palabras alfabéticas.
 
@@ -271,7 +286,7 @@ def lemmatize(texts: Iterable[str], nlp=None, keep_second_person: bool = True, b
       original, porque el lema (ser, tú, merecer) borra la señal de segunda persona (H18).
     - Los tokens especiales <USER>/<URL> se omiten (ya están en la vista de palabras).
     """
-    nlp = nlp or load_spacy()
+    nlp = nlp or get_nlp()
     texts = [t.replace(USER_TOKEN, " ").replace(URL_TOKEN, " ") for t in texts]
     out = []
     for doc in nlp.pipe(texts, batch_size=batch_size):
@@ -371,3 +386,70 @@ def build_views(texts: pd.Series, variant: Variant, restore: dict[str, str] | No
             cache.update(zip(missing, lemmatize(missing, nlp=nlp)))
         views["lemmas"] = processed.map(cache).values
     return views
+
+
+def variant_slug(variant: Variant | str) -> str:
+    """Nombre apto para archivos: 'V2 (alarg.=1)' -> 'V2-alarg1'."""
+    name = variant if isinstance(variant, str) else variant.name
+    return re.sub(r"[^A-Za-z0-9]+", "-", name.replace(".=", "")).strip("-")
+
+
+# ---------------------------------------------------------------------------
+# h) Transformer de scikit-learn
+# ---------------------------------------------------------------------------
+# Caché de lemas compartida en el proceso: texto procesado -> lemas. La salida de spaCy es
+# determinista y no depende de etiquetas, así que reutilizarla entre folds no filtra información.
+LEMMA_CACHE: dict[str, str] = {}
+
+
+def load_lemma_cache(path) -> int:
+    """Precarga LEMMA_CACHE desde un parquet (columnas text, lemmas). Devuelve cuántas entradas añadió."""
+    df = pd.read_parquet(path)
+    before = len(LEMMA_CACHE)
+    LEMMA_CACHE.update(zip(df["text"], df["lemmas"]))
+    return len(LEMMA_CACHE) - before
+
+
+def save_lemma_cache(path) -> None:
+    pd.DataFrame({"text": list(LEMMA_CACHE), "lemmas": list(LEMMA_CACHE.values())}).to_parquet(path, index=False)
+
+
+def _as_text_series(X) -> pd.Series:
+    if isinstance(X, pd.DataFrame):
+        X = X["text"]
+    if isinstance(X, pd.Series):
+        return X.astype(str).reset_index(drop=True)
+    return pd.Series(list(X), dtype=str)
+
+
+class TweetPreprocessor(BaseEstimator, TransformerMixin):
+    """Aplica una variante de preprocesamiento dentro de un Pipeline de scikit-learn.
+
+    - variant: nombre de VARIANTS ('V0', 'V1', 'V2', 'V2 (alarg.=1)', 'V3', 'V4') o un objeto Variant.
+    - restore_dict: diccionario de restauración fijo. Si es None y la variante restaura palabras,
+      se construye en fit() con los textos de entrenamiento (sin etiquetas), así que dentro de una
+      validación cruzada se recalcula en cada fold.
+
+    transform() devuelve un DataFrame con la columna 'text' (pasos a-e) y, si la variante lematiza,
+    'lemmas' (paso f). Se guarda con joblib junto al modelo; spaCy no se serializa, se carga al usarlo.
+    """
+
+    def __init__(self, variant: str | Variant = "V1", restore_dict: dict[str, str] | None = None):
+        self.variant = variant
+        self.restore_dict = restore_dict
+
+    def _resolve_variant(self) -> Variant:
+        return VARIANTS[self.variant] if isinstance(self.variant, str) else self.variant
+
+    def fit(self, X, y=None):
+        self.variant_ = self._resolve_variant()
+        if self.variant_.restore:
+            self.restore_dict_ = (dict(self.restore_dict) if self.restore_dict is not None
+                                  else restore_dict_for(_as_text_series(X)))
+        else:
+            self.restore_dict_ = None
+        return self
+
+    def transform(self, X) -> pd.DataFrame:
+        check_is_fitted(self, "variant_")
+        return build_views(_as_text_series(X), self.variant_, self.restore_dict_, lemma_cache=LEMMA_CACHE)
