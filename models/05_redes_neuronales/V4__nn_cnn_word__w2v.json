@@ -1,0 +1,210 @@
+{
+  "name": "V4__nn_cnn_word__w2v",
+  "created": "2026-10-14T03:24:16",
+  "variant": "V4",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": true
+  },
+  "architecture": "nn_cnn_word",
+  "family": "neuronal",
+  "params": {
+    "emb_dim": 100,
+    "filters": 64,
+    "dropout": 0.5,
+    "lr": 0.001,
+    "head": "shared",
+    "pos_weight": false,
+    "init": "w2v",
+    "weight_decay": 0.01,
+    "batch_size": 64,
+    "n_seeds": 3
+  },
+  "fixed_epochs": 12,
+  "thresholds": {
+    "HS": 0.44,
+    "TR": 0.36,
+    "AG": 0.36
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "f0ddde2",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "05",
+  "stage": "6 variantes",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.7307536527946564,
+        "std": 0.029953510965283238
+      },
+      "F1_TR": {
+        "mean": 0.7981687992629171,
+        "std": 0.026949489515485908
+      },
+      "F1_AG": {
+        "mean": 0.7063244948266417,
+        "std": 0.04458986277169224
+      },
+      "F1_macro": {
+        "mean": 0.7450823156280717,
+        "std": 0.03200554643903628
+      },
+      "F1_micro": {
+        "mean": 0.7410719035037869,
+        "std": 0.03203884617562893
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7202860928055674,
+        "std": 0.031157175083144965
+      },
+      "F1_TR": {
+        "mean": 0.7885812968646011,
+        "std": 0.02891160774227208
+      },
+      "F1_AG": {
+        "mean": 0.7054070584600171,
+        "std": 0.02728910722304643
+      },
+      "F1_macro": {
+        "mean": 0.738091482710062,
+        "std": 0.027709373483612902
+      },
+      "F1_micro": {
+        "mean": 0.7333174071042492,
+        "std": 0.027351779828159305
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "cv_train": {
+    "F1_HS": {
+      "mean": 0.8577934004598131,
+      "std": 0.0475080984541099
+    },
+    "F1_TR": {
+      "mean": 0.9011683417050819,
+      "std": 0.018722958592536025
+    },
+    "F1_AG": {
+      "mean": 0.8456132259694898,
+      "std": 0.042419242046892354
+    },
+    "F1_macro": {
+      "mean": 0.8681916560447949,
+      "std": 0.034556005689034525
+    },
+    "F1_micro": {
+      "mean": 0.8651112051273436,
+      "std": 0.03612099388688989
+    }
+  },
+  "best_epochs_cv": [
+    [
+      [
+        16
+      ],
+      [
+        16
+      ],
+      [
+        17
+      ]
+    ],
+    [
+      [
+        13
+      ],
+      [
+        10
+      ],
+      [
+        11
+      ]
+    ],
+    [
+      [
+        12
+      ],
+      [
+        12
+      ],
+      [
+        8
+      ]
+    ],
+    [
+      [
+        12
+      ],
+      [
+        14
+      ],
+      [
+        12
+      ]
+    ],
+    [
+      [
+        15
+      ],
+      [
+        12
+      ],
+      [
+        12
+      ]
+    ]
+  ],
+  "seed_f1_macro": [
+    0.7392257673454885,
+    0.7438827799329042,
+    0.7365922416177846
+  ],
+  "cv_inner_val": {
+    "F1_HS": {
+      "mean": 0.7446880834474925
+    },
+    "F1_TR": {
+      "mean": 0.7971749992336694
+    },
+    "F1_AG": {
+      "mean": 0.7078125956819898
+    },
+    "F1_macro": {
+      "mean": 0.7498918927877172
+    },
+    "F1_micro": {
+      "mean": 0.7465497960223711
+    }
+  }
+}

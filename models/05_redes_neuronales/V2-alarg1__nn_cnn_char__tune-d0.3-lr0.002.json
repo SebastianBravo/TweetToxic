@@ -1,0 +1,210 @@
+{
+  "name": "V2-alarg1__nn_cnn_char__tune-d0.3-lr0.002",
+  "created": "2026-10-14T03:24:04",
+  "variant": "V2 (alarg.=1)",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 1,
+    "laughs": true,
+    "censor": true,
+    "restore": false,
+    "lemma": false
+  },
+  "architecture": "nn_cnn_char",
+  "family": "neuronal",
+  "params": {
+    "emb_dim": 32,
+    "filters": 64,
+    "dropout": 0.3,
+    "lr": 0.002,
+    "head": "shared",
+    "pos_weight": false,
+    "init": "random",
+    "weight_decay": 0.01,
+    "batch_size": 64,
+    "n_seeds": 3
+  },
+  "fixed_epochs": 12,
+  "thresholds": {
+    "HS": 0.37,
+    "TR": 0.35,
+    "AG": 0.31
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "f0ddde2",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "05",
+  "stage": "6 variantes",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.7225888708036914,
+        "std": 0.03931117997435857
+      },
+      "F1_TR": {
+        "mean": 0.7743905048721847,
+        "std": 0.04720272446981267
+      },
+      "F1_AG": {
+        "mean": 0.6999176687877358,
+        "std": 0.018310137655964794
+      },
+      "F1_macro": {
+        "mean": 0.732299014821204,
+        "std": 0.026655059954431796
+      },
+      "F1_micro": {
+        "mean": 0.7292878700790912,
+        "std": 0.02580117340347617
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7392003100733561,
+        "std": 0.02754220556653401
+      },
+      "F1_TR": {
+        "mean": 0.7906670092872523,
+        "std": 0.024018792731640915
+      },
+      "F1_AG": {
+        "mean": 0.7221079905757325,
+        "std": 0.02554256384573491
+      },
+      "F1_macro": {
+        "mean": 0.750658436645447,
+        "std": 0.02158182713717861
+      },
+      "F1_micro": {
+        "mean": 0.7460633544629268,
+        "std": 0.022679994086899264
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "cv_train": {
+    "F1_HS": {
+      "mean": 0.9170378621453861,
+      "std": 0.03060263228223374
+    },
+    "F1_TR": {
+      "mean": 0.9349441167638867,
+      "std": 0.02028704662500453
+    },
+    "F1_AG": {
+      "mean": 0.894652368970702,
+      "std": 0.04263958528895983
+    },
+    "F1_macro": {
+      "mean": 0.9155447826266583,
+      "std": 0.03065773632268973
+    },
+    "F1_micro": {
+      "mean": 0.9135560354144513,
+      "std": 0.032125064012574686
+    }
+  },
+  "best_epochs_cv": [
+    [
+      [
+        11
+      ],
+      [
+        6
+      ],
+      [
+        13
+      ]
+    ],
+    [
+      [
+        14
+      ],
+      [
+        12
+      ],
+      [
+        14
+      ]
+    ],
+    [
+      [
+        10
+      ],
+      [
+        14
+      ],
+      [
+        12
+      ]
+    ],
+    [
+      [
+        13
+      ],
+      [
+        11
+      ],
+      [
+        16
+      ]
+    ],
+    [
+      [
+        8
+      ],
+      [
+        10
+      ],
+      [
+        5
+      ]
+    ]
+  ],
+  "seed_f1_macro": [
+    0.7415543722646318,
+    0.7456852763001574,
+    0.7426412309971524
+  ],
+  "cv_inner_val": {
+    "F1_HS": {
+      "mean": 0.7481505809540492
+    },
+    "F1_TR": {
+      "mean": 0.7748788391543204
+    },
+    "F1_AG": {
+      "mean": 0.7147340244483157
+    },
+    "F1_macro": {
+      "mean": 0.7459211481855618
+    },
+    "F1_micro": {
+      "mean": 0.7432523612219162
+    }
+  }
+}

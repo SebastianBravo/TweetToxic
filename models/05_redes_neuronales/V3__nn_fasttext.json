@@ -1,0 +1,210 @@
+{
+  "name": "V3__nn_fasttext",
+  "created": "2026-10-14T03:23:47",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "architecture": "nn_fasttext",
+  "family": "neuronal",
+  "params": {
+    "emb_dim": 100,
+    "dropout": 0.3,
+    "lr": 0.005,
+    "buckets": 20000,
+    "head": "shared",
+    "pos_weight": false,
+    "init": "random",
+    "weight_decay": 0.01,
+    "batch_size": 64,
+    "n_seeds": 3
+  },
+  "fixed_epochs": 6,
+  "thresholds": {
+    "HS": 0.35,
+    "TR": 0.31,
+    "AG": 0.28
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "f0ddde2",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "05",
+  "stage": "cribado",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.6884650440713015,
+        "std": 0.015608690371600882
+      },
+      "F1_TR": {
+        "mean": 0.7342433681840334,
+        "std": 0.04446344335291316
+      },
+      "F1_AG": {
+        "mean": 0.6615325685364769,
+        "std": 0.016716625804468907
+      },
+      "F1_macro": {
+        "mean": 0.6947469935972705,
+        "std": 0.017052456122584585
+      },
+      "F1_micro": {
+        "mean": 0.6918682658627913,
+        "std": 0.014179865021558208
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.7357110355962956,
+        "std": 0.0319217720472971
+      },
+      "F1_TR": {
+        "mean": 0.7495485372935773,
+        "std": 0.018929382954416544
+      },
+      "F1_AG": {
+        "mean": 0.6986593030059365,
+        "std": 0.025463240327062774
+      },
+      "F1_macro": {
+        "mean": 0.7279729586319366,
+        "std": 0.016879179651614167
+      },
+      "F1_micro": {
+        "mean": 0.7261933292656119,
+        "std": 0.01852515507062955
+      }
+    }
+  },
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV",
+  "cv_train": {
+    "F1_HS": {
+      "mean": 0.8967326985652161,
+      "std": 0.01998556870040364
+    },
+    "F1_TR": {
+      "mean": 0.8938672472032314,
+      "std": 0.0109435950045862
+    },
+    "F1_AG": {
+      "mean": 0.8648583150479761,
+      "std": 0.016483003783698782
+    },
+    "F1_macro": {
+      "mean": 0.8851527536054746,
+      "std": 0.014181715598057044
+    },
+    "F1_micro": {
+      "mean": 0.8847670172482284,
+      "std": 0.014910231665583747
+    }
+  },
+  "best_epochs_cv": [
+    [
+      [
+        6
+      ],
+      [
+        5
+      ],
+      [
+        5
+      ]
+    ],
+    [
+      [
+        7
+      ],
+      [
+        7
+      ],
+      [
+        7
+      ]
+    ],
+    [
+      [
+        6
+      ],
+      [
+        6
+      ],
+      [
+        7
+      ]
+    ],
+    [
+      [
+        6
+      ],
+      [
+        6
+      ],
+      [
+        6
+      ]
+    ],
+    [
+      [
+        6
+      ],
+      [
+        5
+      ],
+      [
+        5
+      ]
+    ]
+  ],
+  "seed_f1_macro": [
+    0.7296570451517954,
+    0.7278183912984637,
+    0.7304970480947983
+  ],
+  "cv_inner_val": {
+    "F1_HS": {
+      "mean": 0.7267578448302288
+    },
+    "F1_TR": {
+      "mean": 0.737677677947626
+    },
+    "F1_AG": {
+      "mean": 0.683584798885245
+    },
+    "F1_macro": {
+      "mean": 0.7160067738877001
+    },
+    "F1_micro": {
+      "mean": 0.7142320543142295
+    }
+  }
+}

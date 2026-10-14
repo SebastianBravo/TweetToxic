@@ -53,10 +53,11 @@ from sklearn.multioutput import MultiOutputClassifier
 from sklearn.naive_bayes import BernoulliNB, ComplementNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import MaxAbsScaler
+from sklearn.preprocessing import MaxAbsScaler, StandardScaler
 from sklearn.svm import SVC, LinearSVC
 from sklearn.utils.validation import check_is_fitted
 
+import embeddings as emb
 import handcrafted as hf
 import preprocessing as pp
 from common import DATA_DIR, LABELS, ROOT_DIR, SEED, _near_duplicate_key, evaluate_oof, load_test
@@ -91,29 +92,48 @@ def _text_blocks(variant: pp.Variant, use_char: bool) -> list:
     return blocks
 
 
+def _parse_features(features: str) -> tuple[str | None, bool, bool, list[str]]:
+    parts = features.split("+")
+    base = parts[0] if parts[0] in {"tfidf", "word"} else None
+    embs = [p for p in parts if p.startswith("emb-")]
+    extras = set(parts[1 if base else 0:]) - {"svd", "hand"} - set(embs)
+    if (base is None and not embs) or extras:
+        raise ValueError(f"Representación desconocida: {features}")
+    for spec in embs:
+        emb.parse_spec(spec)
+    return base, "svd" in parts, "hand" in parts, embs
+
+
 def make_features(variant: pp.Variant | str, features: str = "tfidf"):
     """Representación del texto. `features` es una especificación con '+':
 
     - base: 'tfidf' = palabras 1-2 + caracteres char_wb 2-5 (decisión D12); 'word' = solo palabras 1-2.
       En V4 se añaden siempre los lemas (1-2).
     - '+svd': reduce la base a SVD_COMPONENTS dimensiones densas (TruncatedSVD, sin etiquetas).
-    - '+hand': concatena los rasgos hechos a mano (features.py) calculados sobre el texto crudo,
+    - '+hand': concatena los rasgos hechos a mano (handcrafted.py) calculados sobre el texto crudo,
       escalados a [0, 1] con MaxAbsScaler.
+    - 'emb-<alg>[-idf][-d<N>][-e<N>]': media de embeddings entrenados aquí (embeddings.py), estandarizada.
+      Puede ser la única representación ('emb-ft') o sumarse a otra ('tfidf+emb-ft'). En V4 los
+      embeddings se entrenan sobre los lemas.
 
     lowercase=False: pasar o no a minúsculas lo decide el preprocesamiento, no el vectorizador.
     """
     variant = _resolve(variant)
-    parts = features.split("+")
-    base, use_svd, use_hand = parts[0], "svd" in parts, "hand" in parts
-    if base not in {"tfidf", "word"} or set(parts[1:]) - {"svd", "hand"}:
-        raise ValueError(f"Representación desconocida: {features}")
-    text_ct = ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))
-    if not use_svd and not use_hand:
-        return text_ct  # misma estructura que en el 03
-    text_cols = ["text"] + (["lemmas"] if variant.lemma else [])
-    text_part = (Pipeline([("tfidf", text_ct), ("svd", TruncatedSVD(SVD_COMPONENTS, random_state=SEED))])
-                 if use_svd else text_ct)
-    blocks = [("text", text_part, text_cols)]
+    base, use_svd, use_hand, embs = _parse_features(features)
+    if base and not use_svd and not use_hand and not embs:
+        return ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))  # misma estructura que en el 03
+    blocks = []
+    if base:
+        text_ct = ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))
+        text_cols = ["text"] + (["lemmas"] if variant.lemma else [])
+        text_part = (Pipeline([("tfidf", text_ct), ("svd", TruncatedSVD(SVD_COMPONENTS, random_state=SEED))])
+                     if use_svd else text_ct)
+        blocks.append(("text", text_part, text_cols))
+    source = "lemmas" if variant.lemma else "text"
+    for spec in embs:
+        cfg = emb.parse_spec(spec)
+        vec = emb.EmbeddingVectorizer(variant=variant.name, source=source, **cfg)
+        blocks.append((spec, Pipeline([("vectors", vec), ("scale", StandardScaler())]), [source]))
     if use_hand:
         blocks.append(("hand", Pipeline([("rules", hf.HandcraftedFeatures()), ("scale", MaxAbsScaler())]), "raw"))
     return ColumnTransformer(blocks)
@@ -230,6 +250,11 @@ FAMILIES = {"logreg": "lineal", "sgd": "lineal", "linsvm": "lineal", "nbsvm": "l
 # en [0, 1] no calibradas; la regresión logística y NB-SVM están razonablemente calibradas por construcción,
 # pero class_weight="balanced" las desplaza hacia la clase positiva.
 CALIBRATED = {"linsvm", "rbfsvm"}
+# Redes neuronales (neural.py): misma API; familia "neuronal".
+NEURAL_ARCHS = {"nn_mlp": "MLP sobre TF-IDF", "nn_fasttext": "Estilo fastText (palabras + n-gramas hasheados)",
+                "nn_cnn_word": "CNN de palabras", "nn_cnn_char": "CNN de caracteres", "nn_bigru": "BiGRU con atención"}
+FAMILIES.update({k: "neuronal" for k in NEURAL_ARCHS})
+CLASSIFIER_NAMES.update(NEURAL_ARCHS)
 
 
 def make_classifier(classifier: str, clf_params: dict | None = None):
@@ -244,7 +269,8 @@ def make_classifier(classifier: str, clf_params: dict | None = None):
 
 
 def build_featurizer(variant: pp.Variant | str, features: str = "tfidf") -> Pipeline:
-    keep_raw = "hand" in features.split("+")
+    _, _, use_hand, _ = _parse_features(features)
+    keep_raw = use_hand
     return Pipeline([("prep", pp.TweetPreprocessor(variant, keep_raw=keep_raw)),
                      ("features", make_features(variant, features))])
 
@@ -285,10 +311,33 @@ def tuned_macro(y_true: np.ndarray, proba: np.ndarray, hierarchy: bool = True) -
     return evaluate_oof(y_true, apply_decision(proba, best_thresholds(y_true, proba), hierarchy), 0.5)["F1_macro"]
 
 
+def empty_mask(X) -> np.ndarray:
+    """True para los tuits sin texto real (p. ej. la celda '#¿NOMBRE?' del test)."""
+    return pp._as_text_series(X).map(lambda t: pp.fix_csv_artifacts(pp.remove_non_ascii(t)) == "").to_numpy()
+
+
+def decide(proba: np.ndarray, X, thresholds=0.5, hierarchy: bool = True, empty_as_negative: bool = True) -> np.ndarray:
+    """Posprocesamiento común a todos los modelos (D13, D17, D2): umbral por etiqueta, jerarquía
+    HS=0 -> TR=0 y tuits vacíos -> 000."""
+    pred = apply_decision(proba, thresholds, hierarchy)
+    if empty_as_negative:
+        pred[empty_mask(X)] = 0
+    return pred
+
+
+class DecisionMixin:
+    """Da a cualquier modelo con predict_proba(X) -> (n, 3) el mismo predict() que TweetToxicClassifier.
+    Requiere los atributos thresholds, hierarchy y empty_as_negative."""
+
+    def predict(self, X) -> np.ndarray:
+        """Etiquetas 0/1 (n, 3) con los umbrales, la jerarquía y la regla de tuits vacíos del modelo."""
+        return decide(self.predict_proba(X), X, self.thresholds, self.hierarchy, self.empty_as_negative)
+
+
 # ---------------------------------------------------------------------------
 # Modelo completo
 # ---------------------------------------------------------------------------
-class TweetToxicClassifier(BaseEstimator, ClassifierMixin):
+class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
     """Modelo multietiqueta completo: texto crudo -> HS, TR, AG.
 
     - variant: variante de preprocesamiento (ver preprocessing.VARIANTS).
@@ -325,21 +374,26 @@ class TweetToxicClassifier(BaseEstimator, ClassifierMixin):
         check_is_fitted(self, "pipeline_")
         return np.column_stack([p[:, 1] for p in self.pipeline_.predict_proba(X)])
 
-    def predict(self, X) -> np.ndarray:
-        """Etiquetas 0/1 (n, 3) con los umbrales y la regla de jerarquía del modelo."""
-        pred = apply_decision(self.predict_proba(X), self.thresholds, self.hierarchy)
-        if self.empty_as_negative:
-            empty = pp._as_text_series(X).map(lambda t: pp.fix_csv_artifacts(pp.remove_non_ascii(t)) == "")
-            pred[empty.to_numpy()] = 0
-        return pred
-
 
 # ---------------------------------------------------------------------------
 # Validación cruzada con los folds compartidos
 # ---------------------------------------------------------------------------
-def _fit_predict_fold(model, texts, Y, trn, val):
+def _fit_predict_fold(model, texts, Y, trn, val, return_train=False):
     fitted = clone(model).fit(texts[trn], Y[trn])
+    if return_train:
+        return fitted.predict_proba(texts[val]), fitted.predict_proba(texts[trn])
     return fitted.predict_proba(texts[val])
+
+
+def fold_thresholds(oof: np.ndarray, Y: np.ndarray, folds: pd.Series, k) -> dict:
+    """Umbral de evaluación del fold k: el óptimo sobre las OOF de los OTROS folds (D13)."""
+    val = (pd.Series(folds).reset_index(drop=True) == k).to_numpy()
+    return best_thresholds(Y[~val], oof[~val])
+
+
+def decision_metrics(y_true: np.ndarray, proba: np.ndarray, thresholds, hierarchy: bool = True) -> dict:
+    """F1 por etiqueta, macro y micro de unas probabilidades con un umbral dado y la jerarquía."""
+    return evaluate_oof(y_true, apply_decision(proba, thresholds, hierarchy), 0.5)
 
 
 def _summarize_folds(oof: np.ndarray, Y: np.ndarray, folds: pd.Series, hierarchy: bool = True) -> tuple:
@@ -353,7 +407,7 @@ def _summarize_folds(oof: np.ndarray, Y: np.ndarray, folds: pd.Series, hierarchy
 
 
 def cross_validate(model: TweetToxicClassifier, texts: pd.Series, Y: np.ndarray, folds: pd.Series,
-                   n_jobs: int = 1) -> dict:
+                   n_jobs: int = 1, return_train: bool = False) -> dict:
     """CV con los folds de common.make_folds. Todo (preprocesamiento, representación, clasificador) se
     ajusta solo con el fold de entrenamiento. n_jobs > 1 reparte los folds entre procesos.
 
@@ -362,20 +416,28 @@ def cross_validate(model: TweetToxicClassifier, texts: pd.Series, Y: np.ndarray,
     - at_05: métricas por fold con umbral 0.5 y sin jerarquía;
     - tuned: métricas por fold con umbral elegido en las OOF de los OTROS folds y con jerarquía
       (estimación casi honesta del modelo final);
-    - fit_seconds: tiempo total (de reloj).
+    - fit_seconds: tiempo total (de reloj);
+    - train (si return_train): métricas por fold sobre los propios datos de entrenamiento del fold
+      (dentro de la muestra), con el mismo umbral y jerarquía que el fold de validación. Sirve para
+      medir el sobreajuste (brecha train − validación).
     """
     texts = pd.Series(texts).reset_index(drop=True)
     folds = pd.Series(folds).reset_index(drop=True)
     oof = np.zeros(Y.shape)
     ks = sorted(folds.unique())
     start = time.perf_counter()
-    probas = Parallel(n_jobs=n_jobs)(
-        delayed(_fit_predict_fold)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy()) for k in ks)
-    for k, p in zip(ks, probas):
-        oof[(folds == k).to_numpy()] = p
+    out = Parallel(n_jobs=n_jobs)(
+        delayed(_fit_predict_fold)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy(), return_train)
+        for k in ks)
+    for k, p in zip(ks, out):
+        oof[(folds == k).to_numpy()] = p[0] if return_train else p
     seconds = time.perf_counter() - start
     at_05, tuned = _summarize_folds(oof, Y, folds, model.hierarchy)
-    return {"oof": oof, "at_05": at_05, "tuned": tuned, "fit_seconds": seconds}
+    result = {"oof": oof, "at_05": at_05, "tuned": tuned, "fit_seconds": seconds}
+    if return_train:
+        result["train"] = pd.DataFrame([decision_metrics(Y[(folds != k).to_numpy()], p[1], fold_thresholds(oof, Y, folds, k),
+                                                         model.hierarchy) for k, p in zip(ks, out)])
+    return result
 
 
 def _inner_splits(texts: pd.Series, Y: np.ndarray, n_splits: int = 3):
@@ -479,12 +541,24 @@ def model_size_mb(model) -> float:
     return buffer.tell() / 1e6
 
 
+# Cada notebook guarda sus modelos en su propia carpeta dentro de models/. El registro y los parquet de
+# predicciones, compartidos por todos, quedan en la raíz de models/.
+MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales"}
+
+
+def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:
+    """models/<carpeta del notebook>/ (o models/ si no se indica notebook)."""
+    folder = Path(models_dir) / MODEL_FOLDERS.get(str(notebook), str(notebook)) if notebook else Path(models_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
 def save_model(model: TweetToxicClassifier, name: str, metadata: dict | None = None,
-               models_dir: Path = MODELS_DIR) -> Path:
-    """Guarda el modelo (joblib, comprimido) y sus metadatos (JSON legible) en models/."""
-    models_dir = Path(models_dir)
-    models_dir.mkdir(parents=True, exist_ok=True)
-    path = models_dir / f"{name}.joblib"
+               models_dir: Path = MODELS_DIR, notebook: str | None = None) -> Path:
+    """Guarda el modelo (joblib, comprimido) y sus metadatos (JSON legible) en models/<carpeta del notebook>/.
+    El notebook se toma del argumento o, si falta, de metadata['notebook']."""
+    notebook = notebook or (metadata or {}).get("notebook")
+    path = model_folder(notebook, models_dir) / f"{name}.joblib"
     joblib.dump(model, path, compress=3)
     features = getattr(model, "features", "tfidf")
     meta = {"name": name, "created": dt.datetime.now().isoformat(timespec="seconds"),
@@ -500,21 +574,40 @@ def save_model(model: TweetToxicClassifier, name: str, metadata: dict | None = N
     return path
 
 
-def load_model(name_or_path, models_dir: Path = MODELS_DIR) -> TweetToxicClassifier:
-    """Carga un modelo guardado. Necesita que notebooks/ esté en sys.path (por preprocessing/modeling/features)."""
+def find_model_path(model_id: str, models_dir: Path = MODELS_DIR) -> Path | None:
+    """Busca models/**/<model_id>.joblib o .pt (en cualquier carpeta de notebook)."""
+    for ext in (".joblib", ".pt"):
+        found = sorted(Path(models_dir).rglob(f"{model_id}{ext}"))
+        if found:
+            return found[0]
+    return None
+
+
+def load_model(name_or_path, models_dir: Path = MODELS_DIR):
+    """Carga un modelo guardado, según su extensión: .joblib (scikit-learn) o .pt (redes de neural.py).
+    Con un model_id sin extensión lo busca en todas las carpetas de models/.
+    Necesita que notebooks/ esté en sys.path (por preprocessing/modeling/handcrafted/neural)."""
     path = Path(name_or_path)
-    if not path.suffix:
-        path = Path(models_dir) / f"{name_or_path}.joblib"
+    if path.suffix not in {".joblib", ".pt"}:
+        path = find_model_path(str(name_or_path), models_dir)
+        if path is None:
+            raise FileNotFoundError(f"No hay ningún models/**/{name_or_path}.joblib ni .pt")
+    if path.suffix == ".pt":
+        import neural
+
+        return neural.load_neural(path)
     return joblib.load(path)
 
 
 REGISTRY_COLUMNS = ["model_id", "family", "classifier", "variant", "features", "params", "notebook",
                     "F1_macro", "F1_macro_std", "F1_micro", "F1_HS", "F1_TR", "F1_AG",
-                    "thr_HS", "thr_TR", "thr_AG", "proba_calibrated", "cv_seconds", "size_mb", "saved"]
+                    "thr_HS", "thr_TR", "thr_AG", "proba_calibrated", "cv_seconds", "size_mb", "saved",
+                    "architecture", "seeds", "epochs", "train_seconds", "path"]
+REGISTRY_KEYS = ["model_id", "family", "F1_macro"]  # columnas mínimas para aceptar un registro existente
 
 
-def registry_row(model_id: str, model: TweetToxicClassifier, cv: dict, notebook: str, saved: bool,
-                 size_mb: float | None = None) -> dict:
+def registry_row(model_id: str, model, cv: dict, notebook: str, saved: bool,
+                 size_mb: float | None = None, extra: dict | None = None) -> dict:
     t = cv["tuned"]
     thr = model.thresholds if isinstance(model.thresholds, dict) else {lab: model.thresholds for lab in LABELS}
     return {"model_id": model_id, "family": FAMILIES[model.classifier], "classifier": model.classifier,
@@ -525,7 +618,9 @@ def registry_row(model_id: str, model: TweetToxicClassifier, cv: dict, notebook:
             **{f"F1_{lab}": round(t[f"F1_{lab}"].mean(), 4) for lab in LABELS},
             **{f"thr_{lab}": thr[lab] for lab in LABELS},
             "proba_calibrated": model.classifier in CALIBRATED, "cv_seconds": round(cv["fit_seconds"], 1),
-            "size_mb": None if size_mb is None else round(size_mb, 2), "saved": saved}
+            "size_mb": None if size_mb is None else round(size_mb, 2), "saved": saved,
+            "architecture": None, "seeds": None, "epochs": None, "train_seconds": None, "path": None,
+            **(extra or {})}
 
 
 def _upsert(path: Path, new: pd.DataFrame, key: str, required: list[str]) -> pd.DataFrame:
@@ -540,7 +635,11 @@ def _upsert(path: Path, new: pd.DataFrame, key: str, required: list[str]) -> pd.
 
 def update_registry(rows: list[dict], path: Path = REGISTRY_PATH) -> pd.DataFrame:
     """Añade o reemplaza filas (por model_id) en models/registry.csv."""
-    reg = _upsert(path, pd.DataFrame(rows)[REGISTRY_COLUMNS], "model_id", REGISTRY_COLUMNS)
+    reg = _upsert(path, pd.DataFrame(rows).reindex(columns=REGISTRY_COLUMNS), "model_id", REGISTRY_KEYS)
+    reg = reg.reindex(columns=REGISTRY_COLUMNS)
+    # ruta del archivo guardado (relativa a models/), buscada en disco para todas las filas
+    reg["path"] = [(str(p.relative_to(path.parent)) if (p := find_model_path(m, path.parent)) else None)
+                   for m in reg["model_id"]]
     reg = reg.sort_values(["F1_macro", "model_id"], ascending=[False, True]).reset_index(drop=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     reg.to_csv(path, index=False)
