@@ -547,7 +547,8 @@ def model_size_mb(model) -> float:
 
 # Cada notebook guarda sus modelos en su propia carpeta dentro de models/. El registro y los parquet de
 # predicciones, compartidos por todos, quedan en la raíz de models/.
-MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer"}
+MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer",
+                 "07": "07_ensamble"}
 
 
 def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:
@@ -675,9 +676,10 @@ def update_predictions(frames: list[pd.DataFrame], path: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Envío a Kaggle
 # ---------------------------------------------------------------------------
-def make_submission(model_id: str, out_dir: Path = SUBMISSIONS_DIR) -> Path:
-    """Carga models/<model_id>.joblib, predice sobre el texto crudo de data/toxic_test.csv y escribe
-    submissions/<model_id>.csv con columnas id,HS,TR,AG (enteros 0/1). Verifica el archivo antes de escribirlo."""
+def make_submission(model_id: str, out_dir: Path = SUBMISSIONS_DIR, filename: str | None = None) -> Path:
+    """Carga models/**/<model_id>.joblib o .pt, predice sobre el texto crudo de data/toxic_test.csv y escribe
+    submissions/<filename o model_id>.csv con columnas id,HS,TR,AG (enteros 0/1). Verifica el archivo antes
+    de escribirlo."""
     test = load_test()
     if test is None:
         raise FileNotFoundError("No existe data/toxic_test.csv")
@@ -695,6 +697,6 @@ def make_submission(model_id: str, out_dir: Path = SUBMISSIONS_DIR) -> Path:
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{model_id}.csv"
+    path = out_dir / f"{filename or model_id}.csv"
     sub.to_csv(path, index=False)
     return path

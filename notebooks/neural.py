@@ -494,6 +494,14 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
 # ---------------------------------------------------------------------------
 # Validación cruzada
 # ---------------------------------------------------------------------------
+def _fresh_workers() -> None:
+    """Cierra los procesos reutilizables de joblib (loky). Si un proceso ya cargó xgboost o LightGBM
+    (OpenMP), entrenar después una red de torch en él se bloquea; con procesos nuevos no pasa."""
+    from joblib.externals.loky import get_reusable_executor
+
+    get_reusable_executor().shutdown(wait=True)
+
+
 def _fit_fold(model, texts, Y, trn, val, keep_model):
     fitted = md.clone(model).fit(texts[trn], Y[trn])
     per_seed = fitted.predict_proba_per_seed(texts[val])
@@ -516,8 +524,10 @@ def neural_cross_validate(model: NeuralTweetClassifier, texts: pd.Series, Y: np.
     folds = pd.Series(folds).reset_index(drop=True)
     ks = sorted(folds.unique())
     start = time.perf_counter()
+    _fresh_workers()
     results = Parallel(n_jobs=n_jobs)(
         delayed(_fit_fold)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy(), keep_models) for k in ks)
+    _fresh_workers()
     return _assemble_cv(model, results, ks, folds, Y, start, keep_models)
 
 
@@ -1133,16 +1143,18 @@ def cached_cross_validate(model, texts: pd.Series, Y: np.ndarray, folds: pd.Seri
 
     Si la caché existe y la configuración coincide, reutiliza los folds ya calculados y solo entrena los que
     falten (recompute=True borra la caché y reentrena todo). Devuelve el mismo diccionario, con
-    'cached_folds' = número de folds leídos de disco."""
+    'cached_folds' = número de folds leídos de disco. 'fit_seconds' es siempre el tiempo de reloj del
+    entrenamiento (guardado en cache_dir/wall_seconds.json), no el de leer la caché."""
     import json
 
     cache_dir = Path(cache_dir)
     config = json.dumps({k: v for k, v in model.get_params().items() if k not in ("n_threads", "log_path")},
                         sort_keys=True, default=str)
     cfg_file = cache_dir / "config.json"
+    wall_file = cache_dir / "wall_seconds.json"
     if recompute or (cfg_file.exists() and cfg_file.read_text() != config):
-        for f in cache_dir.glob("fold_*.pt"):
-            f.unlink()
+        for f in [*cache_dir.glob("fold_*.pt"), wall_file]:
+            f.unlink(missing_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cfg_file.write_text(config)
     texts = pd.Series(texts).reset_index(drop=True)
@@ -1151,11 +1163,21 @@ def cached_cross_validate(model, texts: pd.Series, Y: np.ndarray, folds: pd.Seri
     paths = {k: cache_dir / f"fold_{k}.pt" for k in ks}
     missing = [k for k in ks if not paths[k].exists()]
     start = time.perf_counter()
+    if missing:
+        _fresh_workers()
     computed = dict(zip(missing, Parallel(n_jobs=n_jobs)(
         delayed(_fit_fold_cached)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy(), paths[k],
                                   keep_models) for k in missing)))
+    if missing:
+        _fresh_workers()
+    wall = json.loads(wall_file.read_text())["seconds"] if wall_file.exists() else 0.0
+    if missing:  # se suma lo entrenado ahora a lo de ejecuciones interrumpidas anteriores
+        wall += time.perf_counter() - start
+        wall_file.write_text(json.dumps({"seconds": wall}))
     results = [computed[k] if k in computed else _load_fold(paths[k], keep_models) for k in ks]
     out = _assemble_cv(model, results, ks, folds, Y, start, keep_models)
+    if wall:
+        out["fit_seconds"] = wall
     out["cached_folds"] = len(ks) - len(missing)
     out["fold_train_seconds"] = [r[3] for r in results]
     return out
