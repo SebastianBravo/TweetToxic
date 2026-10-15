@@ -255,6 +255,10 @@ NEURAL_ARCHS = {"nn_mlp": "MLP sobre TF-IDF", "nn_fasttext": "Estilo fastText (p
                 "nn_cnn_word": "CNN de palabras", "nn_cnn_char": "CNN de caracteres", "nn_bigru": "BiGRU con atención"}
 FAMILIES.update({k: "neuronal" for k in NEURAL_ARCHS})
 CLASSIFIER_NAMES.update(NEURAL_ARCHS)
+# Transformer desde cero (06, neural.TransformerTweetClassifier): familia "transformer".
+TRANSFORMER_ARCHS = {"nn_trf_char": "Transformer de caracteres", "nn_trf_bpe": "Transformer con BPE propio"}
+FAMILIES.update({k: "transformer" for k in TRANSFORMER_ARCHS})
+CLASSIFIER_NAMES.update(TRANSFORMER_ARCHS)
 
 
 def make_classifier(classifier: str, clf_params: dict | None = None):
@@ -543,7 +547,7 @@ def model_size_mb(model) -> float:
 
 # Cada notebook guarda sus modelos en su propia carpeta dentro de models/. El registro y los parquet de
 # predicciones, compartidos por todos, quedan en la raíz de models/.
-MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales"}
+MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer"}
 
 
 def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:

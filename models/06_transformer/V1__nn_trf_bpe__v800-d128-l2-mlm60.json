@@ -1,0 +1,220 @@
+{
+  "name": "V1__nn_trf_bpe__v800-d128-l2-mlm60",
+  "created": "2026-10-14T22:07:39",
+  "variant": "V1",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 0,
+    "laughs": false,
+    "censor": false,
+    "restore": false,
+    "lemma": false
+  },
+  "architecture": "Transformer con BPE propio",
+  "family": "transformer",
+  "params": {
+    "tokenization": "bpe800",
+    "d_model": 128,
+    "n_layers": 2,
+    "n_heads": 4,
+    "dropout": 0.1,
+    "pooling": "mean",
+    "augment": false,
+    "mlm_epochs": 60,
+    "lr": 0.0005,
+    "weight_decay": 0.02,
+    "warmup": 0.1,
+    "batch_size": 32,
+    "n_seeds": 3
+  },
+  "fixed_epochs": 5,
+  "max_len": 97,
+  "vocab": 800,
+  "thresholds": {
+    "HS": 0.34,
+    "TR": 0.32,
+    "AG": 0.34
+  },
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "3495fe7",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "06",
+  "stage": "MLM",
+  "cv": {
+    "at_05": {
+      "F1_HS": {
+        "mean": 0.6011910036969992,
+        "std": 0.022622207233573898
+      },
+      "F1_TR": {
+        "mean": 0.7017710401465411,
+        "std": 0.03309726372710617
+      },
+      "F1_AG": {
+        "mean": 0.6064115412296214,
+        "std": 0.026245738884315473
+      },
+      "F1_macro": {
+        "mean": 0.6364578616910539,
+        "std": 0.024563628235711562
+      },
+      "F1_micro": {
+        "mean": 0.6317292804427568,
+        "std": 0.02393497567165297
+      }
+    },
+    "tuned": {
+      "F1_HS": {
+        "mean": 0.6568474078525225,
+        "std": 0.012302908580656018
+      },
+      "F1_TR": {
+        "mean": 0.7185375905718255,
+        "std": 0.028459758677636195
+      },
+      "F1_AG": {
+        "mean": 0.6299363432711911,
+        "std": 0.019129135592528684
+      },
+      "F1_macro": {
+        "mean": 0.6684404472318464,
+        "std": 0.012184248309255425
+      },
+      "F1_micro": {
+        "mean": 0.6636907649924022,
+        "std": 0.010884978372987904
+      }
+    },
+    "train": {
+      "F1_HS": {
+        "mean": 0.7696519824443081,
+        "std": 0.0335176384604557
+      },
+      "F1_TR": {
+        "mean": 0.852294098206219,
+        "std": 0.031337420941349725
+      },
+      "F1_AG": {
+        "mean": 0.7580995359841012,
+        "std": 0.04814353409627902
+      },
+      "F1_macro": {
+        "mean": 0.7933485388782093,
+        "std": 0.03676836926416407
+      },
+      "F1_micro": {
+        "mean": 0.7874211509689771,
+        "std": 0.036628873011819475
+      }
+    },
+    "inner_val": {
+      "F1_HS": {
+        "mean": 0.6569366797662202,
+        "std": 0.042710387377167605
+      },
+      "F1_TR": {
+        "mean": 0.73177108781657,
+        "std": 0.05787343642210679
+      },
+      "F1_AG": {
+        "mean": 0.6464973161663213,
+        "std": 0.07603119305606552
+      },
+      "F1_macro": {
+        "mean": 0.678401694583037,
+        "std": 0.05649593649765484
+      },
+      "F1_micro": {
+        "mean": 0.6730848098507802,
+        "std": 0.05580197797362988
+      }
+    }
+  },
+  "best_epochs_cv": [
+    [
+      [
+        5
+      ],
+      [
+        6
+      ],
+      [
+        4
+      ]
+    ],
+    [
+      [
+        6
+      ],
+      [
+        8
+      ],
+      [
+        4
+      ]
+    ],
+    [
+      [
+        5
+      ],
+      [
+        4
+      ],
+      [
+        4
+      ]
+    ],
+    [
+      [
+        6
+      ],
+      [
+        5
+      ],
+      [
+        4
+      ]
+    ],
+    [
+      [
+        4
+      ],
+      [
+        4
+      ],
+      [
+        5
+      ]
+    ]
+  ],
+  "seed_f1_macro": [
+    0.6459431274417333,
+    0.6568032915531214,
+    0.6365195081949515
+  ],
+  "cv_folds_file": "data/processed/folds.csv",
+  "n_train": 1731,
+  "thresholds_source": "F1 máximo sobre todas las OOF de la CV"
+}

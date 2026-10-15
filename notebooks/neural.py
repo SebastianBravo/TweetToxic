@@ -518,6 +518,11 @@ def neural_cross_validate(model: NeuralTweetClassifier, texts: pd.Series, Y: np.
     start = time.perf_counter()
     results = Parallel(n_jobs=n_jobs)(
         delayed(_fit_fold)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy(), keep_models) for k in ks)
+    return _assemble_cv(model, results, ks, folds, Y, start, keep_models)
+
+
+def _assemble_cv(model, results, ks, folds, Y, start, keep_models) -> dict:
+    """Junta los resultados por fold (tuplas de _fit_fold) en el diccionario de la CV."""
     oof_seeds = np.zeros((model.n_seeds,) + Y.shape)
     for k, (per_seed, *_rest) in zip(ks, results):
         oof_seeds[:, (folds == k).to_numpy()] = per_seed
@@ -569,8 +574,11 @@ def neural_size_mb(model: NeuralTweetClassifier) -> float:
     return buffer.tell() / 1e6
 
 
-def load_neural(path) -> NeuralTweetClassifier:
+def load_neural(path):
+    """Carga un .pt de neural.py: NeuralTweetClassifier (05) o TransformerTweetClassifier (06), según su formato."""
     ck = torch.load(path, weights_only=True)
+    if ck.get("format") == "tweettoxic-transformer-v1":
+        return _load_transformer(ck)
     if ck.get("format") != FORMAT:
         raise ValueError(f"{path} no es un modelo {FORMAT}")
     model = NeuralTweetClassifier(**ck["params"])
@@ -601,3 +609,568 @@ def save_neural_model(model: NeuralTweetClassifier, name: str, metadata: dict | 
             **(metadata or {})}
     path.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str))
     return path
+
+
+# ===========================================================================
+# 06 · Transformer (encoder) desde cero
+# ===========================================================================
+# Nada preentrenado: la arquitectura es torch.nn con pesos aleatorios; el tokenizador (caracteres o
+# BPE) y el preentrenamiento MLM opcional se ajustan en fit(), con el texto del fold de entrenamiento.
+TRF_FORMAT = "tweettoxic-transformer-v1"
+SPECIALS = ["[PAD]", "[UNK]", "[CLS]", "[MASK]", "<USER>", "<URL>"]
+PAD_ID, UNK_ID, CLS_ID, MASK_ID = 0, 1, 2, 3
+SPECIAL_RX = re.compile(r"(<USER>|<URL>)")
+MAX_LEN_CAP = 310
+
+
+def char_noise(text: str, p: float, rng: np.random.Generator) -> str:
+    """Aumentación: con probabilidad p por carácter, lo borra, lo intercambia con el siguiente o lo sustituye
+    por otra letra. Nunca toca los tokens <USER> y <URL>."""
+    out = []
+    for seg in SPECIAL_RX.split(text):
+        if SPECIAL_RX.fullmatch(seg) or not seg:
+            out.append(seg)
+            continue
+        chars, i = list(seg), 0
+        res = []
+        while i < len(chars):
+            c = chars[i]
+            if rng.random() < p:
+                op = rng.integers(3)
+                if op == 0:                      # borrar
+                    i += 1
+                    continue
+                if op == 1 and i + 1 < len(chars):  # intercambiar con el siguiente
+                    res += [chars[i + 1], c]
+                    i += 2
+                    continue
+                res.append("abcdefghijklmnopqrstuvwxyz"[rng.integers(26)])  # sustituir
+                i += 1
+                continue
+            res.append(c)
+            i += 1
+        out.append("".join(res))
+    return "".join(out)
+
+
+class TextTokenizer:
+    """Tokenizador del 06, ajustado con los textos del fold de entrenamiento.
+
+    - kind='char': un token por carácter (vocabulario = caracteres vistos en el fold) + <USER>/<URL> atómicos.
+    - kind='bpe':  BPE entrenado con la librería `tokenizers` (solo su entrenador; nada descargado), con
+      vocab_size tokens y <USER>/<URL> como tokens especiales atómicos.
+    La longitud máxima es el percentil 99 de las longitudes del fold (tope MAX_LEN_CAP), más el token [CLS].
+    """
+
+    def __init__(self, kind: str = "char", vocab_size: int = 800):
+        self.kind = kind
+        self.vocab_size = vocab_size
+
+    def _raw_ids(self, texts: list[str]) -> list[list[int]]:
+        if self.kind == "char":
+            out = []
+            for t in texts:
+                ids = []
+                for seg in SPECIAL_RX.split(t):
+                    if SPECIAL_RX.fullmatch(seg):
+                        ids.append(self.stoi[seg])
+                    else:
+                        ids += [self.stoi.get(c, UNK_ID) for c in seg]
+                out.append(ids)
+            return out
+        return [e.ids for e in self.bpe_.encode_batch(list(texts))]
+
+    def fit(self, texts) -> "TextTokenizer":
+        texts = list(texts)
+        if self.kind == "char":
+            chars = sorted({c for t in texts for seg in SPECIAL_RX.split(t) if not SPECIAL_RX.fullmatch(seg) for c in seg})
+            self.itos = SPECIALS + chars
+            self.stoi = {w: i for i, w in enumerate(self.itos)}
+        else:
+            from tokenizers import Tokenizer, models, pre_tokenizers, trainers
+
+            bpe = Tokenizer(models.BPE(unk_token="[UNK]"))
+            bpe.pre_tokenizer = pre_tokenizers.Metaspace()
+            trainer = trainers.BpeTrainer(vocab_size=self.vocab_size, special_tokens=SPECIALS, min_frequency=2,
+                                          show_progress=False)
+            bpe.train_from_iterator(texts, trainer)
+            assert [bpe.token_to_id(t) for t in SPECIALS[:4]] == [PAD_ID, UNK_ID, CLS_ID, MASK_ID]
+            self.bpe_ = bpe
+        lengths = [len(ids) for ids in self._raw_ids(texts)]
+        self.max_len = int(min(MAX_LEN_CAP, max(8, np.percentile(lengths, 99))))
+        return self
+
+    @property
+    def n_vocab(self) -> int:
+        return len(self.itos) if self.kind == "char" else self.bpe_.get_vocab_size()
+
+    def id_to_token(self, i: int) -> str:
+        return self.itos[i] if self.kind == "char" else (self.bpe_.id_to_token(int(i)) or "[UNK]")
+
+    def encode(self, texts) -> torch.Tensor:
+        """Textos -> tensor (n, max_len + 1) con [CLS] al principio y [PAD] al final."""
+        seqs = self._raw_ids(list(texts))
+        out = torch.full((len(seqs), self.max_len + 1), PAD_ID, dtype=torch.long)
+        out[:, 0] = CLS_ID
+        for i, ids in enumerate(seqs):
+            ids = ids[:self.max_len]
+            out[i, 1:len(ids) + 1] = torch.tensor(ids, dtype=torch.long) if ids else torch.empty(0, dtype=torch.long)
+        return out
+
+    def to_dict(self) -> dict:
+        d = {"kind": self.kind, "vocab_size": self.vocab_size, "max_len": self.max_len}
+        if self.kind == "char":
+            d["itos"] = self.itos
+        else:
+            d["bpe_json"] = self.bpe_.to_str()
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TextTokenizer":
+        tok = cls(d["kind"], d["vocab_size"])
+        tok.max_len = d["max_len"]
+        if tok.kind == "char":
+            tok.itos = list(d["itos"])
+            tok.stoi = {w: i for i, w in enumerate(tok.itos)}
+        else:
+            from tokenizers import Tokenizer
+
+            tok.bpe_ = Tokenizer.from_str(d["bpe_json"])  # tokenizador propio guardado, no descargado
+        return tok
+
+
+class TransformerNet(nn.Module):
+    """Encoder Transformer pequeño: embeddings de token + posiciones aprendidas, n_layers capas pre-LayerNorm
+    con GELU, pooling (media con máscara o [CLS]) y cabeza lineal de 3 salidas. mlm_head solo se usa en el
+    preentrenamiento MLM."""
+
+    def __init__(self, n_vocab, max_len, n_out=3, d_model=128, n_layers=2, n_heads=4, dropout=0.1, pooling="mean"):
+        super().__init__()
+        self.pooling = pooling
+        self.tok = nn.Embedding(n_vocab, d_model, padding_idx=PAD_ID)
+        self.pos = nn.Embedding(max_len + 1, d_model)
+        layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=2 * d_model, dropout=dropout,
+                                           activation="gelu", batch_first=True, norm_first=True)
+        self.encoder = nn.TransformerEncoder(layer, n_layers, enable_nested_tensor=False)
+        self.norm = nn.LayerNorm(d_model)
+        self.drop = nn.Dropout(dropout)
+        self.head = nn.Linear(d_model, n_out)
+        self.mlm_head = nn.Linear(d_model, n_vocab)
+
+    def _embed(self, x):
+        positions = torch.arange(x.shape[1], device=x.device).unsqueeze(0)
+        return self.drop(self.tok(x) + self.pos(positions))
+
+    def encode(self, x):
+        mask = x == PAD_ID
+        return self.norm(self.encoder(self._embed(x), src_key_padding_mask=mask)), mask
+
+    def pool(self, h, mask):
+        if self.pooling == "cls":
+            return h[:, 0]
+        keep = (~mask).unsqueeze(-1).float()
+        return (h * keep).sum(1) / keep.sum(1).clamp(min=1.0)
+
+    def forward(self, x):
+        h, mask = self.encode(x)
+        return self.head(self.drop(self.pool(h, mask)))
+
+    def mlm_logits(self, x):
+        return self.mlm_head(self.encode(x)[0])
+
+    def attention_weights(self, x) -> torch.Tensor:
+        """Atención de la última capa (media de las cabezas): fila del [CLS] con pooling 'cls', o atención
+        media recibida por cada token con pooling 'mean'. Devuelve (B, L)."""
+        mask = x == PAD_ID
+        h = self._embed(x)
+        for layer in self.encoder.layers[:-1]:
+            h = layer(h, src_key_padding_mask=mask)
+        last = self.encoder.layers[-1]
+        z = last.norm1(h)
+        _, w = last.self_attn(z, z, z, key_padding_mask=mask, need_weights=True, average_attn_weights=True)
+        if self.pooling == "cls":
+            return w[:, 0]
+        valid = (~mask).float()
+        return (w * valid.unsqueeze(-1)).sum(1) / valid.sum(1, keepdim=True).clamp(min=1.0)
+
+
+def _schedule(opt, total_steps: int, warmup: float):
+    """Warmup lineal durante la fracción `warmup` de los pasos y decaimiento lineal hasta 0 al final."""
+    warm = max(1, int(warmup * total_steps))
+
+    def factor(step: int) -> float:
+        if step < warm:
+            return (step + 1) / warm
+        return max(0.0, (total_steps - step) / max(1, total_steps - warm))
+
+    return torch.optim.lr_scheduler.LambdaLR(opt, factor)
+
+
+class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
+    """Encoder Transformer desde cero: texto crudo -> HS, TR, AG (misma API que NeuralTweetClassifier).
+
+    - tokenization: 'char', 'bpe800' o 'bpe2000' (BPE entrenado en el fold con ~800 o ~2000 tokens).
+    - d_model, n_layers, n_heads, dropout (también el de atención), pooling ('mean' o 'cls').
+    - augment: ruido de caracteres (aug_char_p) y token dropout a [UNK] (aug_token_p), solo en entrenamiento.
+    - mlm_epochs: épocas de preentrenamiento MLM (15% de tokens enmascarados) con los textos del fold, sin
+      etiquetas, antes del ajuste con etiquetas (0 = sin preentrenar).
+    - AdamW con warmup (fracción `warmup`) y decaimiento lineal a lo largo de max_epochs; clipping 1.0.
+    - early stopping con validación interna (val_size) o épocas fijas (fixed_epochs, con el mismo calendario
+      de tasa de aprendizaje truncado); n_seeds redes promediadas.
+    """
+
+    def __init__(self, variant="V1", tokenization="char", d_model=128, n_layers=2, n_heads=4, dropout=0.1,
+                 pooling="mean", augment=False, aug_char_p=0.05, aug_token_p=0.1, mlm_epochs=0, mlm_prob=0.15,
+                 lr=5e-4, weight_decay=0.02, warmup=0.1, batch_size=32, max_epochs=40, patience=6, val_size=0.12,
+                 n_seeds=3, fixed_epochs=None, seed=SEED, n_threads=2, log_path=None, thresholds=0.5,
+                 hierarchy=True, empty_as_negative=True):
+        self.variant = variant
+        self.tokenization = tokenization
+        self.d_model = d_model
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+        self.dropout = dropout
+        self.pooling = pooling
+        self.augment = augment
+        self.aug_char_p = aug_char_p
+        self.aug_token_p = aug_token_p
+        self.mlm_epochs = mlm_epochs
+        self.mlm_prob = mlm_prob
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.warmup = warmup
+        self.batch_size = batch_size
+        self.max_epochs = max_epochs
+        self.patience = patience
+        self.val_size = val_size
+        self.n_seeds = n_seeds
+        self.fixed_epochs = fixed_epochs
+        self.seed = seed
+        self.n_threads = n_threads
+        self.log_path = log_path
+        self.thresholds = thresholds
+        self.hierarchy = hierarchy
+        self.empty_as_negative = empty_as_negative
+
+    # --- compatibilidad con el registro ---
+    @property
+    def classifier(self) -> str:
+        return "nn_trf_char" if self.tokenization == "char" else "nn_trf_bpe"
+
+    @property
+    def arch(self) -> str:
+        return self.classifier
+
+    @property
+    def features(self) -> str:
+        return (f"{self.tokenization}|d{self.d_model}-l{self.n_layers}|{self.pooling}|drop{self.dropout}"
+                f"|aug={self.augment}|mlm={self.mlm_epochs}")
+
+    @property
+    def clf_params(self) -> dict:
+        return {k: getattr(self, k) for k in ("tokenization", "d_model", "n_layers", "n_heads", "dropout", "pooling",
+                                              "augment", "mlm_epochs", "lr", "weight_decay", "warmup", "batch_size",
+                                              "n_seeds")}
+
+    def _log(self, msg: str) -> None:
+        if self.log_path:
+            with open(self.log_path, "a") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} [{self.variant} {self.features}] {msg}\n")
+
+    def _new_net(self) -> TransformerNet:
+        return TransformerNet(self.tokenizer_.n_vocab, self.tokenizer_.max_len, 3, self.d_model, self.n_layers,
+                              self.n_heads, self.dropout, self.pooling)
+
+    def _encode_train(self, texts: list[str], rng: np.random.Generator) -> torch.Tensor:
+        if not self.augment:
+            return self.tokenizer_.encode(texts)
+        ids = self.tokenizer_.encode([char_noise(t, self.aug_char_p, rng) for t in texts])
+        drop = (torch.from_numpy(rng.random(ids.shape)) < self.aug_token_p) & (ids >= len(SPECIALS))
+        return ids.masked_fill(drop, UNK_ID)
+
+    def _pretrain_mlm(self, net, texts: list[str], seed: int) -> list[float]:
+        """MLM: enmascara el 15% de los tokens (80% [MASK], 10% token al azar, 10% sin cambio) y aprende a
+        predecirlos. Sin etiquetas: solo los textos del fold de entrenamiento."""
+        set_seed(seed)
+        ids_all = self.tokenizer_.encode(texts)
+        n, steps_per_epoch = len(texts), int(np.ceil(len(texts) / self.batch_size))
+        opt = torch.optim.AdamW(net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        sched = _schedule(opt, self.mlm_epochs * steps_per_epoch, self.warmup)
+        gen = torch.Generator().manual_seed(seed)
+        loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        curve = []
+        for epoch in range(self.mlm_epochs):
+            net.train()
+            order = torch.randperm(n, generator=gen)
+            total, count = 0.0, 0
+            for start in range(0, n, self.batch_size):
+                x = ids_all[order[start:start + self.batch_size]].clone()
+                candidates = x >= len(SPECIALS) - 2  # tokens normales y <USER>/<URL>; nunca [PAD]/[CLS]
+                chosen = (torch.rand(x.shape, generator=gen) < self.mlm_prob) & candidates
+                labels = torch.where(chosen, x, torch.full_like(x, -100))
+                r = torch.rand(x.shape, generator=gen)
+                x[chosen & (r < 0.8)] = MASK_ID
+                rand_tok = torch.randint(len(SPECIALS), self.tokenizer_.n_vocab, x.shape, generator=gen)
+                swap = chosen & (r >= 0.8) & (r < 0.9)
+                x[swap] = rand_tok[swap]
+                if not chosen.any():
+                    continue
+                opt.zero_grad()
+                logits = net.mlm_logits(x)
+                loss = loss_fn(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1))
+                loss.backward()
+                nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+                opt.step()
+                sched.step()
+                total += loss.item() * int(chosen.sum())
+                count += int(chosen.sum())
+            curve.append(total / max(count, 1))
+        return curve
+
+    def _train_net(self, net, texts, y, val_ids, val_y, seed):
+        set_seed(seed)
+        rng = np.random.default_rng(seed)
+        loss_fn = nn.BCEWithLogitsLoss()
+        n, steps_per_epoch = len(texts), int(np.ceil(len(texts) / self.batch_size))
+        opt = torch.optim.AdamW(net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        sched = _schedule(opt, self.max_epochs * steps_per_epoch, self.warmup)  # mismo calendario con épocas fijas
+        yt = torch.from_numpy(y.astype(np.float32))
+        gen = torch.Generator().manual_seed(seed)
+        epochs = self.fixed_epochs or self.max_epochs
+        curve = {"train": [], "val": []}
+        best, best_loss, best_epoch, bad = None, np.inf, epochs, 0
+        for epoch in range(1, epochs + 1):
+            net.train()
+            ids = self._encode_train(texts, rng)
+            order = torch.randperm(n, generator=gen)
+            total = 0.0
+            for start in range(0, n, self.batch_size):
+                idx = order[start:start + self.batch_size]
+                opt.zero_grad()
+                loss = loss_fn(net(ids[idx]), yt[idx])
+                loss.backward()
+                nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+                opt.step()
+                sched.step()
+                total += loss.item() * len(idx)
+            curve["train"].append(total / n)
+            if val_ids is None:
+                continue
+            net.eval()
+            with torch.no_grad():
+                vloss = loss_fn(self._logits(net, val_ids), torch.from_numpy(val_y.astype(np.float32))).item()
+            curve["val"].append(vloss)
+            if vloss < best_loss - 1e-4:
+                best, best_loss, best_epoch, bad = copy.deepcopy(net.state_dict()), vloss, epoch, 0
+            else:
+                bad += 1
+                if bad >= self.patience:
+                    break
+        if val_ids is not None:
+            net.load_state_dict(best)
+        return net, best_epoch, curve
+
+    @staticmethod
+    def _logits(net, ids, batch=256):
+        return torch.cat([net(ids[s:s + batch]) for s in range(0, ids.shape[0], batch)])
+
+    def fit(self, X, y):
+        torch.set_num_threads(self.n_threads)
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        start = time.perf_counter()
+        raw = pp._as_text_series(X)
+        Y = np.asarray(y).astype(np.float32)
+        self.prep_ = pp.TweetPreprocessor(self.variant).fit(raw)
+        texts = self.prep_.transform(raw)["text"].tolist()
+        kind, vocab = ("char", 0) if self.tokenization == "char" else ("bpe", int(self.tokenization[3:]))
+        self.tokenizer_ = TextTokenizer(kind, vocab).fit(texts)
+
+        if self.fixed_epochs is None:
+            combo = ["".join(str(int(v)) for v in row) for row in Y]
+            tr_idx, va_idx = next(StratifiedShuffleSplit(1, test_size=self.val_size, random_state=self.seed)
+                                  .split(np.zeros(len(Y)), combo))
+        else:
+            tr_idx, va_idx = np.arange(len(Y)), None
+        self.train_idx_, self.val_idx_ = tr_idx, va_idx
+        tr_texts = [texts[i] for i in tr_idx]
+        val_ids = None if va_idx is None else self.tokenizer_.encode([texts[i] for i in va_idx])
+        val_y = None if va_idx is None else Y[va_idx]
+
+        self.states_, self.best_epochs_, self.curves_ = [], [], []
+        for s in range(self.n_seeds):
+            seed = self.seed + 1000 * s
+            set_seed(seed)
+            net = self._new_net()
+            mlm_curve = self._pretrain_mlm(net, texts, seed) if self.mlm_epochs else []
+            t0 = time.perf_counter()
+            net, best_epoch, curve = self._train_net(net, tr_texts, Y[tr_idx], val_ids, val_y, seed)
+            curve["mlm"] = mlm_curve
+            self.states_.append([{k: v.detach().clone() for k, v in net.state_dict().items()}])
+            self.best_epochs_.append([best_epoch])
+            self.curves_.append([curve])
+            self._log(f"semilla {s}: {len(curve['train'])} épocas, mejor {best_epoch}, "
+                      f"val {min(curve['val']) if curve['val'] else float('nan'):.4f}, {time.perf_counter() - t0:.0f} s"
+                      + (f", MLM {len(mlm_curve)} épocas (pérdida final {mlm_curve[-1]:.3f})" if mlm_curve else ""))
+        self.train_seconds_ = time.perf_counter() - start
+        self.labels_ = list(LABELS)
+        self._nets = None
+        return self
+
+    def _networks(self):
+        if getattr(self, "_nets", None) is None:
+            self._nets = []
+            for (state,) in self.states_:
+                net = self._new_net()
+                net.load_state_dict(state)
+                self._nets.append(net.eval())
+        return self._nets
+
+    def predict_proba_per_seed(self, X) -> np.ndarray:
+        check_is_fitted(self, "states_")
+        ids = self.tokenizer_.encode(self.prep_.transform(pp._as_text_series(X))["text"].tolist())
+        with torch.no_grad():
+            return np.stack([torch.sigmoid(self._logits(net, ids)).numpy() for net in self._networks()])
+
+    def predict_proba(self, X) -> np.ndarray:
+        return self.predict_proba_per_seed(X).mean(axis=0)
+
+    def attention(self, X) -> list[list[tuple[str, float]]]:
+        """Peso de atención por token (última capa, media de cabezas y de semillas). No es una explicación causal."""
+        texts = self.prep_.transform(pp._as_text_series(X))["text"].tolist()
+        ids = self.tokenizer_.encode(texts)
+        with torch.no_grad():
+            w = np.mean([net.attention_weights(ids).numpy() for net in self._networks()], axis=0)
+        out = []
+        for i in range(len(texts)):
+            row = [(self.tokenizer_.id_to_token(int(t)), float(w[i, j])) for j, t in enumerate(ids[i]) if t != PAD_ID]
+            out.append(row)
+        return out
+
+
+def _trf_checkpoint(model: TransformerTweetClassifier) -> dict:
+    import tokenizers
+
+    return {"format": TRF_FORMAT, "params": model.get_params(), "restore_dict": model.prep_.restore_dict_,
+            "tokenizer": model.tokenizer_.to_dict(), "states": model.states_, "best_epochs": model.best_epochs_,
+            "train_seconds": float(getattr(model, "train_seconds_", 0.0)),
+            "versions": {"torch": str(torch.__version__), "python": platform.python_version(),
+                         "tokenizers": tokenizers.__version__}}
+
+
+def save_transformer(model: TransformerTweetClassifier, path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(_trf_checkpoint(model), path)
+    return path
+
+
+def transformer_size_mb(model: TransformerTweetClassifier) -> float:
+    buffer = io.BytesIO()
+    torch.save(_trf_checkpoint(model), buffer)
+    return buffer.tell() / 1e6
+
+
+def _load_transformer(ck: dict) -> TransformerTweetClassifier:
+    model = TransformerTweetClassifier(**ck["params"])
+    prep = pp.TweetPreprocessor(model.variant)
+    prep.variant_ = prep._resolve_variant()
+    prep.restore_dict_ = ck["restore_dict"]
+    model.prep_ = prep
+    model.tokenizer_ = TextTokenizer.from_dict(ck["tokenizer"])
+    model.states_ = ck["states"]
+    model.best_epochs_ = ck["best_epochs"]
+    model.train_seconds_ = ck.get("train_seconds", 0.0)
+    model.labels_ = list(LABELS)
+    model._nets = None
+    return model
+
+
+def save_transformer_model(model: TransformerTweetClassifier, name: str, metadata: dict | None = None,
+                           models_dir: Path = md.MODELS_DIR, notebook: str = "06") -> Path:
+    """Guarda models/06_transformer/<name>.pt y .json."""
+    import datetime as dt
+    import json
+
+    path = save_transformer(model, md.model_folder(notebook, models_dir) / f"{name}.pt")
+    meta = {"name": name, "created": dt.datetime.now().isoformat(timespec="seconds"), "variant": model.variant,
+            "variant_steps": pp.VARIANTS[model.variant].steps(), "architecture": md.CLASSIFIER_NAMES[model.classifier],
+            "family": "transformer", "params": model.clf_params, "fixed_epochs": model.fixed_epochs,
+            "max_len": model.tokenizer_.max_len, "vocab": model.tokenizer_.n_vocab,
+            "thresholds": model.thresholds, "hierarchy": model.hierarchy, "empty_as_negative": model.empty_as_negative,
+            "labels": LABELS, "environment": md.environment_info() | {"torch": str(torch.__version__)},
+            **(metadata or {})}
+    path.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str))
+    return path
+
+
+# ---------------------------------------------------------------------------
+# CV con caché por fold (para poder reanudar sin repetir trabajo)
+# ---------------------------------------------------------------------------
+def _fit_fold_cached(model, texts, Y, trn, val, path: Path, keep_model: bool):
+    result = _fit_fold(model, texts, Y, trn, val, keep_model)
+    per_seed, best_epochs, curves, seconds, fitted, train_proba, tr_idx, va_idx = result
+    payload = {"per_seed": torch.from_numpy(per_seed), "best_epochs": best_epochs, "curves": curves,
+               "seconds": float(seconds), "train_proba": torch.from_numpy(train_proba),
+               "train_idx": torch.from_numpy(np.asarray(tr_idx)), "val_idx": torch.from_numpy(np.asarray(va_idx))}
+    if keep_model and fitted is not None:
+        payload["model"] = _trf_checkpoint(fitted) if isinstance(fitted, TransformerTweetClassifier) else _checkpoint(fitted)
+    torch.save(payload, path)
+    return result
+
+
+def _load_fold(path: Path, keep_model: bool):
+    d = torch.load(path, weights_only=True)
+    fitted = None
+    if keep_model and "model" in d:
+        fitted = _load_transformer(d["model"]) if d["model"]["format"] == TRF_FORMAT else load_neural_dict(d["model"])
+    return (d["per_seed"].numpy(), d["best_epochs"], d["curves"], d["seconds"], fitted, d["train_proba"].numpy(),
+            d["train_idx"].numpy(), d["val_idx"].numpy())
+
+
+def cached_cross_validate(model, texts: pd.Series, Y: np.ndarray, folds: pd.Series, cache_dir, n_jobs: int = 5,
+                          recompute: bool = False, keep_models: bool = False) -> dict:
+    """Como neural_cross_validate, pero guarda cada fold en cache_dir/fold_<k>.pt en cuanto termina.
+
+    Si la caché existe y la configuración coincide, reutiliza los folds ya calculados y solo entrena los que
+    falten (recompute=True borra la caché y reentrena todo). Devuelve el mismo diccionario, con
+    'cached_folds' = número de folds leídos de disco."""
+    import json
+
+    cache_dir = Path(cache_dir)
+    config = json.dumps({k: v for k, v in model.get_params().items() if k not in ("n_threads", "log_path")},
+                        sort_keys=True, default=str)
+    cfg_file = cache_dir / "config.json"
+    if recompute or (cfg_file.exists() and cfg_file.read_text() != config):
+        for f in cache_dir.glob("fold_*.pt"):
+            f.unlink()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cfg_file.write_text(config)
+    texts = pd.Series(texts).reset_index(drop=True)
+    folds = pd.Series(folds).reset_index(drop=True)
+    ks = sorted(folds.unique())
+    paths = {k: cache_dir / f"fold_{k}.pt" for k in ks}
+    missing = [k for k in ks if not paths[k].exists()]
+    start = time.perf_counter()
+    computed = dict(zip(missing, Parallel(n_jobs=n_jobs)(
+        delayed(_fit_fold_cached)(model, texts, Y, (folds != k).to_numpy(), (folds == k).to_numpy(), paths[k],
+                                  keep_models) for k in missing)))
+    results = [computed[k] if k in computed else _load_fold(paths[k], keep_models) for k in ks]
+    out = _assemble_cv(model, results, ks, folds, Y, start, keep_models)
+    out["cached_folds"] = len(ks) - len(missing)
+    out["fold_train_seconds"] = [r[3] for r in results]
+    return out
+
+
+def load_neural_dict(ck: dict) -> NeuralTweetClassifier:
+    """load_neural a partir de un checkpoint ya leído."""
+    model = NeuralTweetClassifier(**ck["params"])
+    prep = pp.TweetPreprocessor(model.variant)
+    prep.variant_ = prep._resolve_variant()
+    prep.restore_dict_ = ck["restore_dict"]
+    model.prep_ = prep
+    model.encoder_ = Encoder.from_dict(ck["encoder"])
+    model.states_ = ck["states"]
+    model.best_epochs_ = ck["best_epochs"]
+    model.labels_ = list(LABELS)
+    model._nets = None
+    return model

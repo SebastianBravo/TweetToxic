@@ -20,6 +20,7 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
     "spacy>=3.8.16",
+    "tokenizers>=0.23.3",
     "torch>=2.14.1",
     "xgboost>=3.2.0",
 ]
