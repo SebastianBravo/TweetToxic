@@ -13,6 +13,7 @@ hiperparámetros. Aquí se especializan:
 
 Todos reciben texto crudo, devuelven predict_proba (n, 3) en el orden HS, TR, AG y tienen el mismo
 predict() (umbrales, jerarquía y tuits vacíos) que el resto de modelos (modeling.DecisionMixin).
+fit(X, y, sample_weight) acepta un peso por fila (11: filas de un corpus externo con peso < 1).
 """
 
 from __future__ import annotations
@@ -46,10 +47,17 @@ def _logreg(C):
     return md.make_classifier("logreg", {"C": C, "l1_ratio": 0.5})
 
 
-def _fit_quiet(est, X, y):
+def _fit_quiet(est, X, y, sample_weight=None):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
-        return est.fit(X, y)
+        if sample_weight is None:
+            return est.fit(X, y)
+        key = f"{est.steps[-1][0]}__sample_weight" if isinstance(est, Pipeline) else "sample_weight"
+        return est.fit(X, y, **{key: np.asarray(sample_weight, float)})
+
+
+def _subset(w, mask):
+    return None if w is None else np.asarray(w)[mask]
 
 
 class SingleLabelModel(BaseEstimator):
@@ -60,9 +68,9 @@ class SingleLabelModel(BaseEstimator):
         self.features = features
         self.C = C
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         featurizer = md.build_featurizer(self.variant, self.features)
-        self.pipeline_ = _fit_quiet(Pipeline(featurizer.steps + [("clf", _logreg(self.C))]), X, np.asarray(y))
+        self.pipeline_ = _fit_quiet(Pipeline(featurizer.steps + [("clf", _logreg(self.C))]), X, np.asarray(y), sample_weight)
         return self
 
     def predict_proba1(self, X) -> np.ndarray:
@@ -86,14 +94,14 @@ class LabelwiseClassifier(_Base):
         self.hierarchy = hierarchy
         self.empty_as_negative = empty_as_negative
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         X = pd.Series(list(X)) if not isinstance(X, pd.Series) else X.reset_index(drop=True)
         Y = np.asarray(y)
         configs = self.configs or {lab: BASE_CONFIG for lab in LABELS}
         self.models_ = []
         for j, lab in enumerate(LABELS):
             keep = ~md.quoted_mask(X) if (lab == "AG" and self.exclude_quoted_ag) else np.ones(len(X), bool)
-            self.models_.append(SingleLabelModel(**configs[lab]).fit(X[keep], Y[keep, j]))
+            self.models_.append(SingleLabelModel(**configs[lab]).fit(X[keep], Y[keep, j], _subset(sample_weight, keep)))
         return self
 
     def predict_proba(self, X) -> np.ndarray:
@@ -110,15 +118,15 @@ class ConditionalClassifier(_Base):
         self.hierarchy = hierarchy
         self.empty_as_negative = empty_as_negative
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         X = pd.Series(list(X)) if not isinstance(X, pd.Series) else X.reset_index(drop=True)
         Y = np.asarray(y)
         cfg = self.config or BASE_CONFIG
         hs = Y[:, 0] == 1
-        self.hs_ = SingleLabelModel(**cfg).fit(X, Y[:, 0])
-        self.tr_hs_ = SingleLabelModel(**cfg).fit(X[hs], Y[hs, 1])
+        self.hs_ = SingleLabelModel(**cfg).fit(X, Y[:, 0], sample_weight)
+        self.tr_hs_ = SingleLabelModel(**cfg).fit(X[hs], Y[hs, 1], _subset(sample_weight, hs))
         keep = hs & ~md.quoted_mask(X)
-        self.ag_hs_ = SingleLabelModel(**cfg).fit(X[keep], Y[keep, AG])
+        self.ag_hs_ = SingleLabelModel(**cfg).fit(X[keep], Y[keep, AG], _subset(sample_weight, keep))
         return self
 
     def predict_proba(self, X) -> np.ndarray:
@@ -139,7 +147,7 @@ class PowersetClassifier(_Base):
         self.hierarchy = hierarchy
         self.empty_as_negative = empty_as_negative
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         Y = np.asarray(y).astype(int)
         cfg = self.config or BASE_CONFIG
         combos = np.array(["".join(map(str, r)) for r in Y])
@@ -152,7 +160,7 @@ class PowersetClassifier(_Base):
         featurizer = md.build_featurizer(cfg["variant"], cfg["features"])
         clf = LogisticRegression(C=cfg["C"], solver="lbfgs", max_iter=3000, class_weight="balanced",
                                  random_state=SEED)
-        self.pipeline_ = _fit_quiet(Pipeline(featurizer.steps + [("clf", clf)]), X, target)
+        self.pipeline_ = _fit_quiet(Pipeline(featurizer.steps + [("clf", clf)]), X, target, sample_weight)
         classes = self.pipeline_[-1].classes_
         self.marginal_ = np.array([[int(c[j]) for j in range(len(LABELS))] for c in classes], dtype=float)
         return self

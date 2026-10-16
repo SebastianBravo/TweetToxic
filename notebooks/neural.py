@@ -275,6 +275,19 @@ def pretrain_vectors(sentences: list[list[str]], itos: list[str], kind: str, dim
     return torch.from_numpy(matrix)
 
 
+def _inner_split(Y, val_size, seed, own_mask=None):
+    """Validación interna estratificada por combinación de etiquetas. Con own_mask, solo las filas propias
+    pueden ir a validación (val_size de ellas); las demás van siempre a entrenamiento."""
+    combo = ["".join(str(int(v)) for v in row) for row in Y]
+    sss = StratifiedShuffleSplit(1, test_size=val_size, random_state=seed)
+    if own_mask is None:
+        return next(sss.split(np.zeros(len(Y)), combo))
+    own = np.flatnonzero(np.asarray(own_mask, bool))
+    _, o_va = next(sss.split(np.zeros(len(own)), [combo[i] for i in own]))
+    va_idx = own[o_va]
+    return np.setdiff1d(np.arange(len(Y)), va_idx), va_idx
+
+
 # ---------------------------------------------------------------------------
 # Estimador
 # ---------------------------------------------------------------------------
@@ -290,6 +303,13 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
     - n_seeds: redes con semillas seed, seed+1, ... cuyas probabilidades se promedian.
     - ag_mask_quoted: la pérdida de AG no cuenta en las filas del artefacto de comillas (H3, P2); HS y TR
       sí las usan. También se excluyen de la pérdida de validación interna de AG.
+
+    fit(X, y, sample_weight, own_mask, pretrain_texts) para un corpus externo (11); con los tres en None es
+    exactamente el entrenamiento de antes:
+    - sample_weight: peso de cada fila en la pérdida (p. ej. 0.5 en las filas externas);
+    - own_mask: True en las filas propias. La validación interna (early stopping) sale solo de ellas; las
+      externas siempre entrenan;
+    - pretrain_texts: textos sin etiquetas que se añaden solo al entrenamiento de Word2Vec/FastText.
     """
     ag_mask_quoted = False  # valor por defecto para los modelos guardados antes de que existiera
 
@@ -421,7 +441,7 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
         n = inputs.shape[0]
         return torch.cat([net(self._batch(inputs, np.arange(s, min(s + batch, n)))) for s in range(0, n, batch)])
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None, own_mask=None, pretrain_texts=None):
         torch.set_num_threads(self.n_threads)
         torch.use_deterministic_algorithms(True, warn_only=True)
         start = time.perf_counter()
@@ -433,9 +453,7 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
         inputs = self.encoder_.transform(views)
 
         if self.fixed_epochs is None:  # validación interna estratificada por combinación de etiquetas
-            combo = ["".join(str(int(v)) for v in row) for row in Y]
-            tr_idx, va_idx = next(StratifiedShuffleSplit(1, test_size=self.val_size, random_state=self.seed)
-                                  .split(np.zeros(len(Y)), combo))
+            tr_idx, va_idx = _inner_split(Y, self.val_size, self.seed, own_mask)
         else:
             tr_idx, va_idx = np.arange(len(Y)), None
         self.train_idx_, self.val_idx_ = tr_idx, va_idx  # posiciones dentro de los datos de fit()
@@ -445,6 +463,9 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
             if self.arch not in WORD_ARCHS:
                 raise ValueError(f"init={self.init} solo aplica a {sorted(WORD_ARCHS)}")
             sentences = [tokenize(t) for t in views[self.encoder_.word_source]]
+            if pretrain_texts is not None:
+                extra = self.prep_.transform(pp._as_text_series(pretrain_texts))[self.encoder_.word_source]
+                sentences += [tokenize(t) for t in extra]
             pretrained = pretrain_vectors(sentences, self.encoder_.itos, self.init, self._hparams()["emb_dim"], self.seed)
 
         def sub(a, idx):
@@ -455,6 +476,8 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
         if getattr(self, "ag_mask_quoted", False):  # P2: AG no aprende de las filas del artefacto
             W = np.ones(Y.shape, dtype=np.float32)
             W[md.quoted_mask(texts), LABELS.index("AG")] = 0.0
+        if sample_weight is not None:
+            W = (np.ones(Y.shape, dtype=np.float32) if W is None else W) * np.asarray(sample_weight, np.float32)[:, None]
         self.states_, self.best_epochs_, self.curves_ = [], [], []
         for s in range(self.n_seeds):
             seed_states, seed_epochs, seed_curves = [], [], []
@@ -855,6 +878,9 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
     - AdamW con warmup (fracción `warmup`) y decaimiento lineal a lo largo de max_epochs; clipping 1.0.
     - early stopping con validación interna (val_size) o épocas fijas (fixed_epochs, con el mismo calendario
       de tasa de aprendizaje truncado); n_seeds redes promediadas.
+
+    fit(X, y, sample_weight, own_mask) (11): como en NeuralTweetClassifier, peso por fila en la pérdida con
+    etiquetas y validación interna solo con las filas propias. El MLM usa todos los textos de fit().
     """
 
     def __init__(self, variant="V1", tokenization="char", d_model=128, n_layers=2, n_heads=4, dropout=0.1,
@@ -965,10 +991,13 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
             curve.append(total / max(count, 1))
         return curve
 
-    def _train_net(self, net, texts, y, val_ids, val_y, seed):
+    def _train_net(self, net, texts, y, val_ids, val_y, seed, w=None):
+        """w: peso (n,) de cada fila en la pérdida de entrenamiento (None = media estándar, como antes)."""
         set_seed(seed)
         rng = np.random.default_rng(seed)
         loss_fn = nn.BCEWithLogitsLoss()
+        if w is not None:
+            elementwise, wt = nn.BCEWithLogitsLoss(reduction="none"), torch.from_numpy(np.asarray(w, np.float32))
         n, steps_per_epoch = len(texts), int(np.ceil(len(texts) / self.batch_size))
         opt = torch.optim.AdamW(net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         sched = _schedule(opt, self.max_epochs * steps_per_epoch, self.warmup)  # mismo calendario con épocas fijas
@@ -985,7 +1014,11 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
             for start in range(0, n, self.batch_size):
                 idx = order[start:start + self.batch_size]
                 opt.zero_grad()
-                loss = loss_fn(net(ids[idx]), yt[idx])
+                if w is None:
+                    loss = loss_fn(net(ids[idx]), yt[idx])
+                else:
+                    bw = wt[idx][:, None].expand(-1, yt.shape[1])
+                    loss = (elementwise(net(ids[idx]), yt[idx]) * bw).sum() / bw.sum().clamp(min=1.0)
                 loss.backward()
                 nn.utils.clip_grad_norm_(net.parameters(), 1.0)
                 opt.step()
@@ -1012,7 +1045,7 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
     def _logits(net, ids, batch=256):
         return torch.cat([net(ids[s:s + batch]) for s in range(0, ids.shape[0], batch)])
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None, own_mask=None):
         torch.set_num_threads(self.n_threads)
         torch.use_deterministic_algorithms(True, warn_only=True)
         start = time.perf_counter()
@@ -1024,12 +1057,11 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
         self.tokenizer_ = TextTokenizer(kind, vocab).fit(texts)
 
         if self.fixed_epochs is None:
-            combo = ["".join(str(int(v)) for v in row) for row in Y]
-            tr_idx, va_idx = next(StratifiedShuffleSplit(1, test_size=self.val_size, random_state=self.seed)
-                                  .split(np.zeros(len(Y)), combo))
+            tr_idx, va_idx = _inner_split(Y, self.val_size, self.seed, own_mask)
         else:
             tr_idx, va_idx = np.arange(len(Y)), None
         self.train_idx_, self.val_idx_ = tr_idx, va_idx
+        tr_w = None if sample_weight is None else np.asarray(sample_weight, np.float32)[tr_idx]
         tr_texts = [texts[i] for i in tr_idx]
         val_ids = None if va_idx is None else self.tokenizer_.encode([texts[i] for i in va_idx])
         val_y = None if va_idx is None else Y[va_idx]
@@ -1041,7 +1073,7 @@ class TransformerTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixi
             net = self._new_net()
             mlm_curve = self._pretrain_mlm(net, texts, seed) if self.mlm_epochs else []
             t0 = time.perf_counter()
-            net, best_epoch, curve = self._train_net(net, tr_texts, Y[tr_idx], val_ids, val_y, seed)
+            net, best_epoch, curve = self._train_net(net, tr_texts, Y[tr_idx], val_ids, val_y, seed, tr_w)
             curve["mlm"] = mlm_curve
             self.states_.append([{k: v.detach().clone() for k, v in net.state_dict().items()}])
             self.best_epochs_.append([best_epoch])

@@ -232,3 +232,5 @@ models/**/*.joblib
 models/**/*.pt
 # Caché de entrenamiento por fold (06): se regenera
 models/**/cache/
+# Corpus externos (11): se descargan con notebooks/11_hateval.ipynb; no se redistribuyen (ver README.md)
+data/external/

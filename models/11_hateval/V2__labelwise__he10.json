@@ -1,0 +1,73 @@
+{
+  "name": "V2__labelwise__he10",
+  "created": "2026-10-16T09:25:29",
+  "class": "LabelwiseClassifier",
+  "params": {
+    "configs": {
+      "HS": {
+        "variant": "V1",
+        "features": "tfidf",
+        "C": 10.0
+      },
+      "TR": {
+        "variant": "V1",
+        "features": "tfidf",
+        "C": 10.0
+      },
+      "AG": {
+        "variant": "V1",
+        "features": "tfidf+hand",
+        "C": 10.0
+      }
+    },
+    "empty_as_negative": true,
+    "exclude_quoted_ag": false,
+    "hierarchy": true,
+    "thresholds": 0.5
+  },
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "db66ad6",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "11",
+  "external": {
+    "corpus": "valeriobasile/HatEval",
+    "revision": "d170b5cb1844f3614493fce7c7eaaae087a5201c",
+    "rows": 3621,
+    "weight": 1.0,
+    "license": "CC BY-NC 4.0"
+  },
+  "selected": {
+    "configs": {
+      "HS": {
+        "variant": "V1",
+        "features": "tfidf",
+        "C": 10.0
+      },
+      "TR": {
+        "variant": "V1",
+        "features": "tfidf",
+        "C": 10.0
+      },
+      "AG": {
+        "variant": "V1",
+        "features": "tfidf+hand",
+        "C": 10.0
+      }
+    }
+  },
+  "origin": "11 (pool v2 + HatEval)"
+}

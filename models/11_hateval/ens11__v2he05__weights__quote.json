@@ -1,0 +1,154 @@
+{
+  "name": "ens11__v2he05__weights__quote",
+  "created": "2026-10-16T10:38:51",
+  "family": "ensamble",
+  "base_models": [
+    "V2__logreg__nested__he05",
+    "V1__logreg__nested__he05",
+    "V3__linsvm__nested__he05",
+    "V3__et__word__k2000__he05",
+    "V3__xgb__word__k500__he05",
+    "V3__nbsvm__he05",
+    "V3__mnb__word__he05",
+    "V1__nn_cnn_char__tune-d0.3-lr0.002__he05",
+    "V1__nn_cnn_word__w2v__he05",
+    "V3__nn_mlp__tune-d0.5-lr0.002__he05",
+    "V2__labelwise__he05",
+    "V2__conditional__he05",
+    "V2__powerset__he05",
+    "V3__nn_cnn_char__tune-d0.3-lr0.002__he05"
+  ],
+  "combiner": {
+    "method": "weights",
+    "calib": "platt",
+    "weights": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.1162,
+        0.0249,
+        0.0794
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0526,
+        0.0,
+        0.1078
+      ],
+      [
+        0.1697,
+        0.5356,
+        0.2438
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.1594,
+        0.1089,
+        0.2997
+      ],
+      [
+        0.0,
+        0.3306,
+        0.0
+      ],
+      [
+        0.502,
+        0.0,
+        0.193
+      ],
+      [
+        0.0,
+        0.0,
+        0.0763
+      ]
+    ]
+  },
+  "thresholds": {
+    "HS": 0.37,
+    "TR": 0.36,
+    "AG": 0.37
+  },
+  "hierarchy": true,
+  "quote_rule": true,
+  "twin_table_size": 0,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "db66ad6",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "11",
+  "role": "H5_quote",
+  "pool": [
+    "V2__logreg__nested__he05",
+    "V1__logreg__nested__he05",
+    "V3__linsvm__nested__he05",
+    "V3__et__word__k2000__he05",
+    "V3__xgb__word__k500__he05",
+    "V3__nbsvm__he05",
+    "V3__mnb__word__he05",
+    "V1__nn_cnn_char__tune-d0.3-lr0.002__he05",
+    "V1__nn_cnn_word__w2v__he05",
+    "V3__nn_mlp__tune-d0.5-lr0.002__he05",
+    "V2__labelwise__he05",
+    "V2__conditional__he05",
+    "V2__powerset__he05",
+    "V3__nn_cnn_char__tune-d0.3-lr0.002__he05"
+  ],
+  "method": "weights",
+  "cv_F1_macro_with_rule": {
+    "folds": 0.8216,
+    "folds_seed2": 0.8275
+  },
+  "external": {
+    "corpus": "valeriobasile/HatEval",
+    "revision": "d170b5cb1844f3614493fce7c7eaaae087a5201c",
+    "rows": 3621,
+    "license": "CC BY-NC 4.0"
+  },
+  "seed": 42
+}

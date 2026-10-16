@@ -1,0 +1,56 @@
+{
+  "name": "V3__xgb__word__k500__he10",
+  "created": "2026-10-16T09:25:34",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "features": "word",
+  "classifier": "xgb",
+  "family": "boosting",
+  "clf_params": {
+    "select_k": 500
+  },
+  "classifier_repr": "WeightedPipeline(steps=[('chi2',\n                         SelectKBest(k=500,\n                                     score_func=<function chi2 at 0x11a58e820>)),\n                        ('model',\n                         XGBClassifier(base_score=None, booster=None,\n                                       callbacks=None, colsample_bylevel=None,\n                                       colsample_bynode=None,\n                                       colsample_bytree=0.8, device=None,\n                                       early_stopping_rounds=None,\n                                       enable_categorical=True,\n                                       eval_metric='logloss',\n                                       feature_types=None, feature_weights=None,\n                                       gamma=None, grow_policy=None,\n                                       importance_type=None,\n                                       interaction_constraints=None,\n                                       learning_rate=0.05, max_bin=None,\n                                       max_cat_threshold=None,\n                                       max_cat_to_onehot=None,\n                                       max_delta_step=None, max_depth=4,\n                                       max_leaves=None, min_child_weight=None,\n                                       missing=nan, monotone_constraints=None,\n                                       multi_strategy=None, n_estimators=300,\n                                       n_jobs=2, num_parallel_tree=None, ...))])",
+  "proba_calibrated": false,
+  "thresholds": 0.5,
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "db66ad6",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "11",
+  "external": {
+    "corpus": "valeriobasile/HatEval",
+    "revision": "d170b5cb1844f3614493fce7c7eaaae087a5201c",
+    "rows": 3621,
+    "weight": 1.0,
+    "license": "CC BY-NC 4.0"
+  },
+  "selected": {},
+  "origin": "11 (pool v2 + HatEval)"
+}

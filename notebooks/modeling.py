@@ -163,14 +163,16 @@ class NBSVMClassifier(BaseEstimator, ClassifierMixin):
     def _scale(self, X):
         return sp.csr_matrix(sp.csr_matrix(X).multiply(self.r_))
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
+        """sample_weight (11): pondera cada fila en las sumas p, q y en la regresión logística."""
         X = sp.csr_matrix(X)
         y = np.asarray(y)
-        p = self.alpha + np.asarray(X[y == 1].sum(axis=0)).ravel()
-        q = self.alpha + np.asarray(X[y == 0].sum(axis=0)).ravel()
+        Xw = X if sample_weight is None else sp.csr_matrix(X.multiply(np.asarray(sample_weight, float)[:, None]))
+        p = self.alpha + np.asarray(Xw[y == 1].sum(axis=0)).ravel()
+        q = self.alpha + np.asarray(Xw[y == 0].sum(axis=0)).ravel()
         self.r_ = np.log((p / p.sum()) / (q / q.sum()))
         self.lr_ = LogisticRegression(C=self.C, class_weight="balanced", solver="liblinear", max_iter=2000,
-                                      random_state=SEED).fit(self._scale(X), y)
+                                      random_state=SEED).fit(self._scale(X), y, sample_weight=sample_weight)
         self.classes_ = self.lr_.classes_
         return self
 
@@ -267,6 +269,16 @@ FAMILIES.update({k: "transformer" for k in TRANSFORMER_ARCHS})
 CLASSIFIER_NAMES.update(TRANSFORMER_ARCHS)
 
 
+class WeightedPipeline(Pipeline):
+    """Pipeline (chi2 + clasificador) que acepta sample_weight y lo pasa solo al clasificador final; la
+    selección chi2 no usa pesos. Sin pesos es exactamente un Pipeline."""
+
+    def fit(self, X, y=None, sample_weight=None, **params):
+        if sample_weight is not None:
+            params[f"{self.steps[-1][0]}__sample_weight"] = sample_weight
+        return super().fit(X, y, **params)
+
+
 def make_classifier(classifier: str, clf_params: dict | None = None):
     """Clasificador de una etiqueta. clf_params puede incluir 'select_k': selección chi2 de los k mejores
     rasgos para esa etiqueta, calculada en fit() (dentro del fold)."""
@@ -274,7 +286,7 @@ def make_classifier(classifier: str, clf_params: dict | None = None):
     select_k = params.pop("select_k", None)
     clf = CLASSIFIERS[classifier](**params)
     if select_k:
-        return Pipeline([("chi2", SelectKBest(chi2, k=select_k)), ("model", clf)])
+        return WeightedPipeline([("chi2", SelectKBest(chi2, k=select_k)), ("model", clf)])
     return clf
 
 
@@ -366,6 +378,9 @@ class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
       predicen 000 en predict() (decisión D2).
     - exclude_quoted_ag: el clasificador de AG se entrena sin las filas del artefacto de comillas (H3, P2);
       HS y TR siguen usándolas. La representación (TF-IDF, etc.) se ajusta con todas las filas.
+
+    fit(X, y, sample_weight) (11): peso de cada fila en los clasificadores (p. ej. 0.5 para las filas de un
+    corpus externo); la representación (vocabularios, IDF, SVD) se ajusta con todas las filas sin pesos.
     """
     exclude_quoted_ag = False  # valor por defecto para los modelos guardados antes de que existiera
 
@@ -381,17 +396,19 @@ class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
         self.clf_params = clf_params
         self.exclude_quoted_ag = exclude_quoted_ag
 
-    def fit(self, X, y):
+    def fit(self, X, y, sample_weight=None):
         y = np.asarray(y)
+        weights = {} if sample_weight is None else {"clf__sample_weight": np.asarray(sample_weight, float)}
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", ConvergenceWarning)
             self.pipeline_ = build_pipeline(self.variant, self.classifier, getattr(self, "features", "tfidf"),
-                                            getattr(self, "clf_params", None)).fit(X, y)
+                                            getattr(self, "clf_params", None)).fit(X, y, **weights)
             if self.exclude_quoted_ag:  # P2: reentrena solo el clasificador de AG sin las filas del artefacto
                 keep = ~quoted_mask(X)
                 Xt = self.pipeline_[:-1].transform(X)
                 ag = LABELS.index("AG")
-                self.pipeline_[-1].estimators_[ag] = clone(self.pipeline_[-1].estimator).fit(Xt[keep], y[keep, ag])
+                kw = {} if sample_weight is None else {"sample_weight": np.asarray(sample_weight, float)[keep]}
+                self.pipeline_[-1].estimators_[ag] = clone(self.pipeline_[-1].estimator).fit(Xt[keep], y[keep, ag], **kw)
         self.labels_ = list(LABELS)
         return self
 
@@ -573,7 +590,7 @@ def model_size_mb(model) -> float:
 # predicciones, compartidos por todos, quedan en la raíz de models/.
 MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer",
                  "07": "07_ensamble", "08": "08_finales", "09": "09_mejoras",
-                 "10": "10_candidatos"}
+                 "10": "10_candidatos", "11": "11_hateval"}
 
 
 def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:

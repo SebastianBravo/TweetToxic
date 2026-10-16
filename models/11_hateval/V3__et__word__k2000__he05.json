@@ -1,0 +1,56 @@
+{
+  "name": "V3__et__word__k2000__he05",
+  "created": "2026-10-16T08:53:52",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "features": "word",
+  "classifier": "et",
+  "family": "árboles",
+  "clf_params": {
+    "select_k": 2000
+  },
+  "classifier_repr": "WeightedPipeline(steps=[('chi2',\n                         SelectKBest(k=2000,\n                                     score_func=<function chi2 at 0x119f02820>)),\n                        ('model',\n                         ExtraTreesClassifier(class_weight='balanced_subsample',\n                                              n_estimators=300, n_jobs=2,\n                                              random_state=42))])",
+  "proba_calibrated": false,
+  "thresholds": 0.5,
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "db66ad6",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0"
+  },
+  "notebook": "11",
+  "external": {
+    "corpus": "valeriobasile/HatEval",
+    "revision": "d170b5cb1844f3614493fce7c7eaaae087a5201c",
+    "rows": 3621,
+    "weight": 0.5,
+    "license": "CC BY-NC 4.0"
+  },
+  "selected": {},
+  "origin": "11 (pool v2 + HatEval)"
+}
