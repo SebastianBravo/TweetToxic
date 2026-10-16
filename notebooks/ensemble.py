@@ -469,6 +469,15 @@ def fit_final(combiner: Combiner, P, Y, folds, oof_proba, rule="plateau"):
 # ---------------------------------------------------------------------------
 # Modelo final
 # ---------------------------------------------------------------------------
+def quote_mask(X) -> np.ndarray:
+    """True en los tuits cuyo texto crudo (el de common.load_train/load_test) contiene ';' o '"': son los que
+    el CSV guarda entre comillas (H3, misma definición que el 01 §2). En el train, las 51 filas así tienen
+    todas AG=1."""
+    import preprocessing as pp
+
+    return pp._as_text_series(X).str.contains('[;"]').to_numpy()
+
+
 def _predict_one(model_id: str, texts) -> np.ndarray:
     """Probabilidades de un modelo base (se ejecuta en un proceso aparte)."""
     return md.load_model(model_id).predict_proba(texts)
@@ -488,7 +497,7 @@ class EnsembleClassifier(md.DecisionMixin):
     idénticas a las de predecir en el proceso principal."""
 
     def __init__(self, base_ids, combiner: Combiner, thresholds, hierarchy=True, empty_as_negative=True,
-                 name=None, n_jobs=4):
+                 name=None, n_jobs=4, quote_rule=False):
         self.base_ids = list(base_ids)
         self.combiner = combiner
         self.thresholds = thresholds
@@ -496,6 +505,7 @@ class EnsembleClassifier(md.DecisionMixin):
         self.empty_as_negative = empty_as_negative
         self.name = name
         self.n_jobs = n_jobs
+        self.quote_rule = quote_rule
 
     def base_proba(self, X) -> np.ndarray:
         from joblib import Parallel, delayed
@@ -519,17 +529,27 @@ class EnsembleClassifier(md.DecisionMixin):
     def predict_proba(self, X) -> np.ndarray:
         return self.predict_proba_from_base(self.base_proba(X))
 
+    def predict(self, X) -> np.ndarray:
+        """Decisiones 0/1: umbrales, jerarquía (HS=0 -> TR=0) y tuits vacíos -> 000. Con quote_rule=True
+        (D34), después AG=1 en los tuits con el artefacto de comillas (H3); HS y TR no cambian."""
+        pred = super().predict(X)
+        if getattr(self, "quote_rule", False):  # los modelos guardados antes de D34 no tienen el atributo
+            pred[quote_mask(X), LABELS.index("AG")] = 1
+        return pred
+
 
 def save_ensemble(model: EnsembleClassifier, name: str, metadata: dict | None = None,
                   models_dir: Path = md.MODELS_DIR) -> Path:
-    """models/07_ensamble/<name>.joblib (combinador, ids, umbrales) + .json legible."""
+    """models/<carpeta del notebook>/<name>.joblib (combinador, ids, umbrales) + .json legible. El notebook se
+    toma de metadata['notebook'] (por defecto, el 07)."""
     import torch
 
-    path = md.model_folder("07", models_dir) / f"{name}.joblib"
+    path = md.model_folder(str((metadata or {}).get("notebook", "07")), models_dir) / f"{name}.joblib"
     joblib.dump(model, path, compress=3)
     meta = {"name": name, "created": dt.datetime.now().isoformat(timespec="seconds"), "family": "ensamble",
             "base_models": model.base_ids, "combiner": model.combiner.describe(),
             "thresholds": model.thresholds, "hierarchy": model.hierarchy,
+            "quote_rule": getattr(model, "quote_rule", False),
             "empty_as_negative": model.empty_as_negative, "labels": LABELS,
             "environment": md.environment_info() | {"torch": str(torch.__version__)}, **(metadata or {})}
     path.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str))
