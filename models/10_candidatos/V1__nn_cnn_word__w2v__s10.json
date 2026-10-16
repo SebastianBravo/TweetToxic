@@ -1,0 +1,56 @@
+{
+  "name": "V1__nn_cnn_word__w2v__s10",
+  "created": "2026-10-15T23:42:18",
+  "variant": "V1",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 0,
+    "laughs": false,
+    "censor": false,
+    "restore": false,
+    "lemma": false
+  },
+  "architecture": "nn_cnn_word",
+  "family": "neuronal",
+  "params": {
+    "emb_dim": 100,
+    "filters": 64,
+    "dropout": 0.5,
+    "lr": 0.001,
+    "head": "shared",
+    "pos_weight": false,
+    "init": "w2v",
+    "weight_decay": 0.01,
+    "batch_size": 64,
+    "n_seeds": 10
+  },
+  "fixed_epochs": 11,
+  "thresholds": 0.5,
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "dbc1c1a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "10",
+  "origin": "09 (pool v2)"
+}

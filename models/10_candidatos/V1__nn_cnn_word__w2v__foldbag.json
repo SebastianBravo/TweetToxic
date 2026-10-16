@@ -1,0 +1,8 @@
+{
+  "name": "V1__nn_cnn_word__w2v__foldbag",
+  "base": "V1__nn_cnn_word__w2v",
+  "folds": 5,
+  "uses_torch": true,
+  "notebook": "10",
+  "role": "fold-bag (A_foldbag_quote)"
+}

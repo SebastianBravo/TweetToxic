@@ -572,7 +572,8 @@ def model_size_mb(model) -> float:
 # Cada notebook guarda sus modelos en su propia carpeta dentro de models/. El registro y los parquet de
 # predicciones, compartidos por todos, quedan en la raíz de models/.
 MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer",
-                 "07": "07_ensamble", "08": "08_finales", "09": "09_mejoras"}
+                 "07": "07_ensamble", "08": "08_finales", "09": "09_mejoras",
+                 "10": "10_candidatos"}
 
 
 def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:

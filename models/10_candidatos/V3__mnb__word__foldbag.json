@@ -1,0 +1,8 @@
+{
+  "name": "V3__mnb__word__foldbag",
+  "base": "V3__mnb__word",
+  "folds": 5,
+  "uses_torch": false,
+  "notebook": "10",
+  "role": "fold-bag (A_foldbag_quote)"
+}

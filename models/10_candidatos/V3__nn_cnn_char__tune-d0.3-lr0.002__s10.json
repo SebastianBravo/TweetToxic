@@ -1,0 +1,56 @@
+{
+  "name": "V3__nn_cnn_char__tune-d0.3-lr0.002__s10",
+  "created": "2026-10-15T23:48:27",
+  "variant": "V3",
+  "variant_steps": {
+    "artifacts": true,
+    "users": true,
+    "urls": true,
+    "hashtags": true,
+    "rt": true,
+    "lower": true,
+    "elong": 2,
+    "laughs": true,
+    "censor": true,
+    "restore": true,
+    "lemma": false
+  },
+  "architecture": "nn_cnn_char",
+  "family": "neuronal",
+  "params": {
+    "emb_dim": 32,
+    "filters": 64,
+    "dropout": 0.3,
+    "lr": 0.002,
+    "head": "shared",
+    "pos_weight": false,
+    "init": "random",
+    "weight_decay": 0.01,
+    "batch_size": 64,
+    "n_seeds": 10
+  },
+  "fixed_epochs": 11,
+  "thresholds": 0.5,
+  "hierarchy": true,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "dbc1c1a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "10",
+  "origin": "09 (pool v2)"
+}

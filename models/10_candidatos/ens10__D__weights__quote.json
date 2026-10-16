@@ -1,0 +1,120 @@
+{
+  "name": "ens10__D__weights__quote",
+  "created": "2026-10-16T00:21:12",
+  "family": "ensamble",
+  "base_models": [
+    "V2__logreg__nested",
+    "V1__logreg__nested",
+    "V3__linsvm__nested",
+    "V3__et__word__k2000",
+    "V3__xgb__word__k500",
+    "V3__nbsvm",
+    "V3__mnb__word",
+    "V1__nn_cnn_char__tune-d0.3-lr0.002",
+    "V1__nn_cnn_word__w2v",
+    "V3__nn_mlp__tune-d0.5-lr0.002"
+  ],
+  "combiner": {
+    "method": "weights",
+    "calib": "platt",
+    "weights": [
+      [
+        0.0,
+        0.0,
+        0.0635
+      ],
+      [
+        0.5181,
+        0.4635,
+        0.5121
+      ],
+      [
+        0.2359,
+        0.0,
+        0.0
+      ],
+      [
+        0.0397,
+        0.0416,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.2228
+      ],
+      [
+        0.2063,
+        0.4949,
+        0.2016
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ]
+  },
+  "thresholds": {
+    "HS": 0.36,
+    "TR": 0.35,
+    "AG": 0.35
+  },
+  "hierarchy": true,
+  "quote_rule": true,
+  "twin_table_size": 0,
+  "empty_as_negative": true,
+  "labels": [
+    "HS",
+    "TR",
+    "AG"
+  ],
+  "environment": {
+    "python": "3.14.6",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "spacy": "3.8.16",
+    "spacy_model": "es_core_news_sm",
+    "seed": 42,
+    "git_commit": "dbc1c1a",
+    "xgboost": "3.4.1",
+    "lightgbm": "4.7.0",
+    "torch": "2.14.1"
+  },
+  "notebook": "10",
+  "role": "D_weights_quote",
+  "pool": [
+    "V2__logreg__nested",
+    "V1__logreg__nested",
+    "V3__linsvm__nested",
+    "V3__et__word__k2000",
+    "V3__xgb__word__k500",
+    "V3__nbsvm",
+    "V3__mnb__word",
+    "V1__nn_cnn_char__tune-d0.3-lr0.002",
+    "V1__nn_cnn_word__w2v",
+    "V3__nn_mlp__tune-d0.5-lr0.002"
+  ],
+  "method": "weights",
+  "cv_F1_macro_with_rule": {
+    "folds": 0.8041,
+    "folds_seed2": 0.7995
+  },
+  "seed": 42
+}

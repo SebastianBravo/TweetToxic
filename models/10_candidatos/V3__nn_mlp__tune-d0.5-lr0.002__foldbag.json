@@ -1,0 +1,8 @@
+{
+  "name": "V3__nn_mlp__tune-d0.5-lr0.002__foldbag",
+  "base": "V3__nn_mlp__tune-d0.5-lr0.002",
+  "folds": 5,
+  "uses_torch": true,
+  "notebook": "10",
+  "role": "fold-bag (A_foldbag_quote)"
+}

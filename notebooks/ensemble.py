@@ -488,6 +488,32 @@ def quote_mask(X) -> np.ndarray:
     return md.quoted_mask(X)
 
 
+def _uses_torch(model_id: str) -> bool:
+    """¿El modelo guardado usa torch? (.pt, o un .joblib cuyo .json lo declara, como los FoldBagModel de redes)."""
+    path = md.find_model_path(model_id)
+    if path.suffix == ".pt":
+        return True
+    meta = path.with_suffix(".json")
+    return meta.exists() and bool(json.loads(meta.read_text()).get("uses_torch", False))
+
+
+class FoldBagModel(md.DecisionMixin):
+    """Media de las probabilidades de los modelos de cada fold de la CV (entrenados con el 80% de los
+    datos), en lugar de un modelo reentrenado con el 100%. Así, en el test, cada modelo base da
+    probabilidades con la misma distribución que sus OOF, que son con las que se ajustaron el stacker y los
+    umbrales."""
+
+    def __init__(self, models, name=None, thresholds=0.5, hierarchy=True, empty_as_negative=True):
+        self.models = list(models)
+        self.name = name
+        self.thresholds = thresholds
+        self.hierarchy = hierarchy
+        self.empty_as_negative = empty_as_negative
+
+    def predict_proba(self, X) -> np.ndarray:
+        return np.mean([m.predict_proba(X) for m in self.models], axis=0)
+
+
 def _predict_one(model_id: str, texts) -> np.ndarray:
     """Probabilidades de un modelo base (se ejecuta en un proceso aparte)."""
     return md.load_model(model_id).predict_proba(texts)
@@ -523,7 +549,7 @@ class EnsembleClassifier(md.DecisionMixin):
         from joblib.externals.loky import get_reusable_executor
 
         texts = X.reset_index(drop=True) if isinstance(X, pd.Series) else pd.Series(list(X))
-        is_torch = {m: md.find_model_path(m).suffix == ".pt" for m in self.base_ids}
+        is_torch = {m: _uses_torch(m) for m in self.base_ids}
         out = {}
         for group in ([m for m in self.base_ids if not is_torch[m]], [m for m in self.base_ids if is_torch[m]]):
             if not group:
