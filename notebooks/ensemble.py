@@ -38,7 +38,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 import modeling as md
-from common import LABELS, SEED, evaluate_oof
+from common import LABELS, SEED, _near_duplicate_key, evaluate_oof
 
 EPS = 1e-4                      # recorte de probabilidades antes del logit y de la log-loss
 THRESHOLD_GRID = md.THRESHOLD_GRID
@@ -132,15 +132,24 @@ def argmax_threshold(y, p, grid=THRESHOLD_GRID) -> float:
 THRESHOLD_RULES = {"plateau": plateau_threshold, "argmax": argmax_threshold}
 
 
-def choose_thresholds(Y, proba, rule="plateau") -> dict:
-    return {lab: THRESHOLD_RULES[rule](Y[:, j], proba[:, j]) for j, lab in enumerate(LABELS)}
+def choose_thresholds(Y, proba, rule="plateau", quote=None) -> dict:
+    """Umbral por etiqueta. Con quote (máscara de la regla de comillas), el de AG se elige sin esas filas,
+    porque en ellas la regla decide AG=1."""
+    out = {}
+    for j, lab in enumerate(LABELS):
+        rows = slice(None) if quote is None or lab != "AG" else ~np.asarray(quote)
+        out[lab] = THRESHOLD_RULES[rule](Y[rows, j], proba[rows, j])
+    return out
 
 
-def decide(proba, thresholds, hierarchy=True, empty=None) -> np.ndarray:
-    """Umbral por etiqueta, jerarquía HS=0 -> TR=0 (D7) y tuits vacíos -> 000 (D2)."""
+def decide(proba, thresholds, hierarchy=True, empty=None, quote=None) -> np.ndarray:
+    """Umbral por etiqueta, jerarquía HS=0 -> TR=0 (D7), tuits vacíos -> 000 (D2) y, con quote, la regla
+    de comillas (D34): AG=1 en esas filas."""
     pred = md.apply_decision(proba, thresholds, hierarchy)
     if empty is not None:
         pred[np.asarray(empty)] = 0
+    if quote is not None:
+        pred[np.asarray(quote), LABELS.index("AG")] = 1
     return pred
 
 
@@ -412,8 +421,9 @@ METHOD_NAMES = {"mean": "(i) promedio simple", "cal-mean": "(ii) promedio calibr
 # ---------------------------------------------------------------------------
 # Protocolo de evaluación
 # ---------------------------------------------------------------------------
-def crossfit(combiner: Combiner, P, Y, folds, empty=None) -> dict:
-    """Evalúa un combinador con la CV externa (ver la docstring del módulo).
+def crossfit(combiner: Combiner, P, Y, folds, empty=None, quote=None) -> dict:
+    """Evalúa un combinador con la CV externa (ver la docstring del módulo). Con quote (máscara de la regla
+    de comillas), las decisiones llevan AG=1 en esas filas y el umbral de AG se elige sin ellas.
 
     Devuelve:
     - proba: probabilidades combinadas fuera de fold (n, 3);
@@ -438,11 +448,13 @@ def crossfit(combiner: Combiner, P, Y, folds, empty=None) -> dict:
         fitted = copy.deepcopy(combiner).fit(P[trn], Y[trn], g_trn)
         proba[val] = fitted.predict(P[val])
         emp = None if empty is None else np.asarray(empty)[val]
+        q_trn = None if quote is None else np.asarray(quote)[trn]
+        q_val = None if quote is None else np.asarray(quote)[val]
         for r in THRESHOLD_RULES:
-            thr = choose_thresholds(Y[trn], inner, r)
+            thr = choose_thresholds(Y[trn], inner, r, q_trn)
             thresholds[r][k] = thr
             for h in (True, False):
-                d = decide(proba[val], thr, h, emp)
+                d = decide(proba[val], thr, h, emp, q_val)
                 rows[(r, h)].append(metrics(Y[val], d))
                 if r == "plateau" and h:
                     pred[val] = d
@@ -459,11 +471,11 @@ def paired_delta(a: pd.Series, b: pd.Series) -> dict:
     return {"Δ": float(d.mean()), "Δ desv.": float(d.std(ddof=1)), "folds a favor": int((d > 0).sum())}
 
 
-def fit_final(combiner: Combiner, P, Y, folds, oof_proba, rule="plateau"):
+def fit_final(combiner: Combiner, P, Y, folds, oof_proba, rule="plateau", quote=None):
     """Combinador ajustado con todas las OOF y umbrales elegidos sobre sus predicciones fuera de fold
-    (las del crossfit), con la misma regla que en la evaluación."""
+    (las del crossfit), con la misma regla que en la evaluación (y, con quote, el de AG sin esas filas)."""
     fitted = copy.deepcopy(combiner).fit(P, Y, np.asarray(folds))
-    return fitted, choose_thresholds(Y, oof_proba, rule)
+    return fitted, choose_thresholds(Y, oof_proba, rule, quote)
 
 
 # ---------------------------------------------------------------------------
@@ -473,9 +485,7 @@ def quote_mask(X) -> np.ndarray:
     """True en los tuits cuyo texto crudo (el de common.load_train/load_test) contiene ';' o '"': son los que
     el CSV guarda entre comillas (H3, misma definición que el 01 §2). En el train, las 51 filas así tienen
     todas AG=1."""
-    import preprocessing as pp
-
-    return pp._as_text_series(X).str.contains('[;"]').to_numpy()
+    return md.quoted_mask(X)
 
 
 def _predict_one(model_id: str, texts) -> np.ndarray:
@@ -497,7 +507,7 @@ class EnsembleClassifier(md.DecisionMixin):
     idénticas a las de predecir en el proceso principal."""
 
     def __init__(self, base_ids, combiner: Combiner, thresholds, hierarchy=True, empty_as_negative=True,
-                 name=None, n_jobs=4, quote_rule=False):
+                 name=None, n_jobs=4, quote_rule=False, twin_table=None):
         self.base_ids = list(base_ids)
         self.combiner = combiner
         self.thresholds = thresholds
@@ -506,6 +516,7 @@ class EnsembleClassifier(md.DecisionMixin):
         self.name = name
         self.n_jobs = n_jobs
         self.quote_rule = quote_rule
+        self.twin_table = twin_table
 
     def base_proba(self, X) -> np.ndarray:
         from joblib import Parallel, delayed
@@ -531,10 +542,16 @@ class EnsembleClassifier(md.DecisionMixin):
 
     def predict(self, X) -> np.ndarray:
         """Decisiones 0/1: umbrales, jerarquía (HS=0 -> TR=0) y tuits vacíos -> 000. Con quote_rule=True
-        (D34), después AG=1 en los tuits con el artefacto de comillas (H3); HS y TR no cambian."""
+        (D34), después AG=1 en los tuits con el artefacto de comillas (H3); HS y TR no cambian. Con
+        twin_table (P6), al final, la etiqueta de su gemelo del train en los tuits que tienen uno."""
         pred = super().predict(X)
         if getattr(self, "quote_rule", False):  # los modelos guardados antes de D34 no tienen el atributo
             pred[quote_mask(X), LABELS.index("AG")] = 1
+        if getattr(self, "twin_table", None):  # P6: tuits con un gemelo normalizado en el train
+            keys = [_near_duplicate_key(t) for t in md.pp._as_text_series(X)]
+            for i, k in enumerate(keys):
+                if k in self.twin_table:
+                    pred[i] = self.twin_table[k]
         return pred
 
 
@@ -550,7 +567,26 @@ def save_ensemble(model: EnsembleClassifier, name: str, metadata: dict | None = 
             "base_models": model.base_ids, "combiner": model.combiner.describe(),
             "thresholds": model.thresholds, "hierarchy": model.hierarchy,
             "quote_rule": getattr(model, "quote_rule", False),
+            "twin_table_size": len(getattr(model, "twin_table", None) or {}),
             "empty_as_negative": model.empty_as_negative, "labels": LABELS,
             "environment": md.environment_info() | {"torch": str(torch.__version__)}, **(metadata or {})}
     path.with_suffix(".json").write_text(json.dumps(meta, indent=2, ensure_ascii=False, default=str))
     return path
+
+
+def twin_table(texts, Y, exclude=None) -> dict:
+    """{clave normalizada: [HS, TR, AG]} de los grupos de tuits del train con la misma clave
+    (common._near_duplicate_key). La etiqueta es la mayoría de cada columna; los grupos con algún empate
+    (etiquetas contradictorias, H13) se omiten. exclude: posiciones que no cuentan para la mayoría."""
+    keys = pd.Series([_near_duplicate_key(t) for t in texts])
+    Y = np.asarray(Y)
+    table = {}
+    for k, idx in keys.groupby(keys).groups.items():
+        idx = [i for i in idx if exclude is None or i not in exclude]
+        if not idx:
+            continue
+        mean = Y[idx].mean(axis=0)
+        if np.any(mean == 0.5):
+            continue
+        table[k] = (mean > 0.5).astype(int).tolist()
+    return table

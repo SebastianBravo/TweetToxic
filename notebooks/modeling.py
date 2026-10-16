@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import os
 import platform
 import subprocess
 import time
@@ -62,8 +63,9 @@ import handcrafted as hf
 import preprocessing as pp
 from common import DATA_DIR, LABELS, ROOT_DIR, SEED, _near_duplicate_key, evaluate_oof, load_test
 
-MODELS_DIR = ROOT_DIR / "models"
-SUBMISSIONS_DIR = ROOT_DIR / "submissions"
+# Las variables de entorno permiten redirigir modelos y envíos (p. ej. a una carpeta temporal en las pruebas)
+MODELS_DIR = Path(os.environ.get("TWEETTOXIC_MODELS_DIR", ROOT_DIR / "models"))
+SUBMISSIONS_DIR = Path(os.environ.get("TWEETTOXIC_SUBMISSIONS_DIR", ROOT_DIR / "submissions"))
 REGISTRY_PATH = MODELS_DIR / "registry.csv"
 OOF_PATH = MODELS_DIR / "oof_predictions.parquet"
 TEST_PRED_PATH = MODELS_DIR / "test_predictions.parquet"
@@ -80,9 +82,11 @@ def _resolve(variant: pp.Variant | str) -> pp.Variant:
     return pp.VARIANTS[variant] if isinstance(variant, str) else variant
 
 
-def _text_blocks(variant: pp.Variant, use_char: bool) -> list:
-    blocks = [("word", TfidfVectorizer(ngram_range=(1, 2), lowercase=False, token_pattern=TOKEN_PATTERN,
-                                       sublinear_tf=True), "text")]
+def _text_blocks(variant: pp.Variant, use_char: bool, use_word: bool = True) -> list:
+    blocks = []
+    if use_word:
+        blocks.append(("word", TfidfVectorizer(ngram_range=(1, 2), lowercase=False, token_pattern=TOKEN_PATTERN,
+                                               sublinear_tf=True), "text"))
     if use_char:
         blocks.append(("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 5), lowercase=False,
                                                sublinear_tf=True, min_df=2), "text"))
@@ -94,7 +98,7 @@ def _text_blocks(variant: pp.Variant, use_char: bool) -> list:
 
 def _parse_features(features: str) -> tuple[str | None, bool, bool, list[str]]:
     parts = features.split("+")
-    base = parts[0] if parts[0] in {"tfidf", "word"} else None
+    base = parts[0] if parts[0] in {"tfidf", "word", "char"} else None
     embs = [p for p in parts if p.startswith("emb-")]
     extras = set(parts[1 if base else 0:]) - {"svd", "hand"} - set(embs)
     if (base is None and not embs) or extras:
@@ -107,7 +111,8 @@ def _parse_features(features: str) -> tuple[str | None, bool, bool, list[str]]:
 def make_features(variant: pp.Variant | str, features: str = "tfidf"):
     """Representación del texto. `features` es una especificación con '+':
 
-    - base: 'tfidf' = palabras 1-2 + caracteres char_wb 2-5 (decisión D12); 'word' = solo palabras 1-2.
+    - base: 'tfidf' = palabras 1-2 + caracteres char_wb 2-5 (decisión D12); 'word' = solo palabras 1-2;
+      'char' = solo caracteres char_wb 2-5.
       En V4 se añaden siempre los lemas (1-2).
     - '+svd': reduce la base a SVD_COMPONENTS dimensiones densas (TruncatedSVD, sin etiquetas).
     - '+hand': concatena los rasgos hechos a mano (handcrafted.py) calculados sobre el texto crudo,
@@ -120,11 +125,12 @@ def make_features(variant: pp.Variant | str, features: str = "tfidf"):
     """
     variant = _resolve(variant)
     base, use_svd, use_hand, embs = _parse_features(features)
+    use_char, use_word = base in ("tfidf", "char"), base != "char"
     if base and not use_svd and not use_hand and not embs:
-        return ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))  # misma estructura que en el 03
+        return ColumnTransformer(_text_blocks(variant, use_char, use_word))  # misma estructura que en el 03
     blocks = []
     if base:
-        text_ct = ColumnTransformer(_text_blocks(variant, use_char=base == "tfidf"))
+        text_ct = ColumnTransformer(_text_blocks(variant, use_char, use_word))
         text_cols = ["text"] + (["lemmas"] if variant.lemma else [])
         text_part = (Pipeline([("tfidf", text_ct), ("svd", TruncatedSVD(SVD_COMPONENTS, random_state=SEED))])
                      if use_svd else text_ct)
@@ -315,6 +321,12 @@ def tuned_macro(y_true: np.ndarray, proba: np.ndarray, hierarchy: bool = True) -
     return evaluate_oof(y_true, apply_decision(proba, best_thresholds(y_true, proba), hierarchy), 0.5)["F1_macro"]
 
 
+def quoted_mask(X) -> np.ndarray:
+    """True en los tuits cuyo texto crudo contiene ';' o '"': los que el CSV guarda entre comillas (H3).
+    En el train, las 51 filas así tienen todas AG=1 (artefacto del archivo)."""
+    return pp._as_text_series(X).str.contains('[;"]').to_numpy()
+
+
 def empty_mask(X) -> np.ndarray:
     """True para los tuits sin texto real (p. ej. la celda '#¿NOMBRE?' del test)."""
     return pp._as_text_series(X).map(lambda t: pp.fix_csv_artifacts(pp.remove_non_ascii(t)) == "").to_numpy()
@@ -352,10 +364,14 @@ class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
     - hierarchy: aplicar la regla HS=0 -> TR=0 en predict().
     - empty_as_negative: los tuits sin texto real (p. ej. la celda '#¿NOMBRE?' del test) se
       predicen 000 en predict() (decisión D2).
+    - exclude_quoted_ag: el clasificador de AG se entrena sin las filas del artefacto de comillas (H3, P2);
+      HS y TR siguen usándolas. La representación (TF-IDF, etc.) se ajusta con todas las filas.
     """
+    exclude_quoted_ag = False  # valor por defecto para los modelos guardados antes de que existiera
 
     def __init__(self, variant: str = "V1", classifier: str = "logreg", thresholds=0.5, hierarchy: bool = True,
-                 empty_as_negative: bool = True, features: str = "tfidf", clf_params: dict | None = None):
+                 empty_as_negative: bool = True, features: str = "tfidf", clf_params: dict | None = None,
+                 exclude_quoted_ag: bool = False):
         self.variant = variant
         self.classifier = classifier
         self.thresholds = thresholds
@@ -363,6 +379,7 @@ class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
         self.empty_as_negative = empty_as_negative
         self.features = features
         self.clf_params = clf_params
+        self.exclude_quoted_ag = exclude_quoted_ag
 
     def fit(self, X, y):
         y = np.asarray(y)
@@ -370,6 +387,11 @@ class TweetToxicClassifier(DecisionMixin, BaseEstimator, ClassifierMixin):
             warnings.simplefilter("ignore", ConvergenceWarning)
             self.pipeline_ = build_pipeline(self.variant, self.classifier, getattr(self, "features", "tfidf"),
                                             getattr(self, "clf_params", None)).fit(X, y)
+            if self.exclude_quoted_ag:  # P2: reentrena solo el clasificador de AG sin las filas del artefacto
+                keep = ~quoted_mask(X)
+                Xt = self.pipeline_[:-1].transform(X)
+                ag = LABELS.index("AG")
+                self.pipeline_[-1].estimators_[ag] = clone(self.pipeline_[-1].estimator).fit(Xt[keep], y[keep, ag])
         self.labels_ = list(LABELS)
         return self
 
@@ -474,17 +496,19 @@ def select_params(variant, classifier, features, grid: list[dict], texts: pd.Ser
     return grid[best], scores
 
 
-def _nested_fold(variant, classifier, features, grid, texts, Y, trn, val, inner_splits):
+def _nested_fold(variant, classifier, features, grid, texts, Y, trn, val, inner_splits, model_kwargs=None):
     best, _scores = select_params(variant, classifier, features, grid, texts[trn].reset_index(drop=True), Y[trn],
                                  inner_splits)
-    model = TweetToxicClassifier(variant=variant, classifier=classifier, features=features, clf_params=best)
+    model = TweetToxicClassifier(variant=variant, classifier=classifier, features=features, clf_params=best,
+                                 **(model_kwargs or {}))
     return model.fit(texts[trn], Y[trn]).predict_proba(texts[val]), best
 
 
 def nested_cross_validate(variant, classifier, features, grid: list[dict], texts: pd.Series, Y: np.ndarray,
-                          folds: pd.Series, inner_splits: int = 3, n_jobs: int = 1) -> dict:
+                          folds: pd.Series, inner_splits: int = 3, n_jobs: int = 1, model_kwargs: dict | None = None) -> dict:
     """CV anidada: en cada fold externo, una CV interna de `inner_splits` folds (solo con los datos de
-    entrenamiento de ese fold) elige los hiperparámetros; el fold externo solo mide.
+    entrenamiento de ese fold) elige los hiperparámetros; el fold externo solo mide. model_kwargs se pasa al
+    TweetToxicClassifier de cada fold (p. ej. exclude_quoted_ag=True).
 
     Devuelve lo mismo que cross_validate más `params_per_fold` (la configuración elegida en cada fold).
     """
@@ -494,7 +518,7 @@ def nested_cross_validate(variant, classifier, features, grid: list[dict], texts
     start = time.perf_counter()
     results = Parallel(n_jobs=n_jobs)(
         delayed(_nested_fold)(variant, classifier, features, grid, texts, Y, (folds != k).to_numpy(),
-                              (folds == k).to_numpy(), inner_splits) for k in ks)
+                              (folds == k).to_numpy(), inner_splits, model_kwargs) for k in ks)
     oof = np.zeros(Y.shape)
     for k, (p, _) in zip(ks, results):
         oof[(folds == k).to_numpy()] = p
@@ -548,7 +572,7 @@ def model_size_mb(model) -> float:
 # Cada notebook guarda sus modelos en su propia carpeta dentro de models/. El registro y los parquet de
 # predicciones, compartidos por todos, quedan en la raíz de models/.
 MODEL_FOLDERS = {"03": "03_modelos", "04": "04_modelos_clasicos", "05": "05_redes_neuronales", "06": "06_transformer",
-                 "07": "07_ensamble", "08": "08_finales"}
+                 "07": "07_ensamble", "08": "08_finales", "09": "09_mejoras"}
 
 
 def model_folder(notebook: str | None, models_dir: Path = MODELS_DIR) -> Path:

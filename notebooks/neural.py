@@ -288,12 +288,16 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
     - hidden, dropout, lr, emb_dim, filters: None = valores de ARCH_DEFAULTS.
     - early stopping con validación interna (val_size) y paciencia; fixed_epochs entrena sin validación.
     - n_seeds: redes con semillas seed, seed+1, ... cuyas probabilidades se promedian.
+    - ag_mask_quoted: la pérdida de AG no cuenta en las filas del artefacto de comillas (H3, P2); HS y TR
+      sí las usan. También se excluyen de la pérdida de validación interna de AG.
     """
+    ag_mask_quoted = False  # valor por defecto para los modelos guardados antes de que existiera
 
     def __init__(self, variant="V1", arch="nn_fasttext", head="shared", pos_weight=False, init="random",
                  hidden=None, dropout=None, lr=None, emb_dim=None, filters=None, weight_decay=1e-2,
                  batch_size=64, max_epochs=30, patience=5, val_size=0.12, n_seeds=3, fixed_epochs=None,
-                 seed=SEED, n_threads=2, thresholds=0.5, hierarchy=True, empty_as_negative=True):
+                 seed=SEED, n_threads=2, thresholds=0.5, hierarchy=True, empty_as_negative=True,
+                 ag_mask_quoted=False):
         self.variant = variant
         self.arch = arch
         self.head = head
@@ -316,6 +320,7 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
         self.thresholds = thresholds
         self.hierarchy = hierarchy
         self.empty_as_negative = empty_as_negative
+        self.ag_mask_quoted = ag_mask_quoted
 
     # --- compatibilidad con el registro de modelos ---
     @property
@@ -356,9 +361,20 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
         pos = y.sum(0)
         return nn.BCEWithLogitsLoss(pos_weight=torch.tensor((len(y) - pos) / np.maximum(pos, 1), dtype=torch.float32))
 
-    def _train_net(self, net, inputs, y, val_inputs, val_y, seed):
+    def _train_net(self, net, inputs, y, val_inputs, val_y, seed, w=None, val_w=None):
+        """w / val_w: pesos (n, salidas) de cada término de la pérdida (0 = no cuenta); None = pérdida media
+        estándar (exactamente la de antes)."""
         set_seed(seed)
-        loss_fn = self._loss_fn(y)
+        base_loss = self._loss_fn(y)
+        if w is None:
+            loss_fn = base_loss
+        else:
+            elementwise = nn.BCEWithLogitsLoss(reduction="none", pos_weight=base_loss.pos_weight)
+            wt, vwt = torch.from_numpy(w.astype(np.float32)), torch.from_numpy(val_w.astype(np.float32)) if val_w is not None else None
+
+            def loss_fn(logits, target, weights=None):
+                weights = wt if weights is None else weights
+                return (elementwise(logits, target) * weights).sum() / weights.sum().clamp(min=1.0)
         opt = torch.optim.AdamW(net.parameters(), lr=self._hparams()["lr"], weight_decay=self.weight_decay)
         yt = torch.from_numpy(y.astype(np.float32))
         epochs = self.fixed_epochs or self.max_epochs
@@ -373,7 +389,10 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
             for start in range(0, n, self.batch_size):
                 idx = order[start:start + self.batch_size]
                 opt.zero_grad()
-                loss = loss_fn(net(self._batch(inputs, idx)), yt[idx])
+                if w is None:
+                    loss = loss_fn(net(self._batch(inputs, idx)), yt[idx])
+                else:
+                    loss = loss_fn(net(self._batch(inputs, idx)), yt[idx], wt[torch.as_tensor(idx)])
                 loss.backward()
                 nn.utils.clip_grad_norm_(net.parameters(), 1.0)
                 opt.step()
@@ -383,7 +402,10 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
                 continue
             net.eval()
             with torch.no_grad():
-                vloss = loss_fn(self._logits(net, val_inputs), torch.from_numpy(val_y.astype(np.float32))).item()
+                if w is None:
+                    vloss = loss_fn(self._logits(net, val_inputs), torch.from_numpy(val_y.astype(np.float32))).item()
+                else:
+                    vloss = loss_fn(self._logits(net, val_inputs), torch.from_numpy(val_y.astype(np.float32)), vwt).item()
             curve["val"].append(vloss)
             if vloss < best_loss - 1e-4:
                 best, best_loss, best_epoch, bad = copy.deepcopy(net.state_dict()), vloss, epoch, 0
@@ -429,15 +451,21 @@ class NeuralTweetClassifier(md.DecisionMixin, BaseEstimator, ClassifierMixin):
             return None if idx is None else (a[idx] if sp.issparse(a) else a[torch.as_tensor(idx)])
 
         targets = [list(range(3))] if self.head == "shared" else [[j] for j in range(3)]
+        W = None
+        if getattr(self, "ag_mask_quoted", False):  # P2: AG no aprende de las filas del artefacto
+            W = np.ones(Y.shape, dtype=np.float32)
+            W[md.quoted_mask(texts), LABELS.index("AG")] = 0.0
         self.states_, self.best_epochs_, self.curves_ = [], [], []
         for s in range(self.n_seeds):
             seed_states, seed_epochs, seed_curves = [], [], []
             for cols in targets:
                 set_seed(self.seed + 1000 * s + cols[0])
                 net = self._new_net(len(cols), pretrained)
-                net, best_epoch, curve = self._train_net(net, sub(inputs, tr_idx), Y[tr_idx][:, cols], sub(inputs, va_idx),
-                                                         None if va_idx is None else Y[va_idx][:, cols],
-                                                         self.seed + 1000 * s + cols[0])
+                net, best_epoch, curve = self._train_net(
+                    net, sub(inputs, tr_idx), Y[tr_idx][:, cols], sub(inputs, va_idx),
+                    None if va_idx is None else Y[va_idx][:, cols], self.seed + 1000 * s + cols[0],
+                    None if W is None else W[tr_idx][:, cols],
+                    None if W is None or va_idx is None else W[va_idx][:, cols])
                 seed_states.append({k: v.detach().clone() for k, v in net.state_dict().items()})
                 seed_epochs.append(best_epoch)
                 seed_curves.append(curve)
