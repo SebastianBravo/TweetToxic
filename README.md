@@ -35,6 +35,13 @@ En macOS, XGBoost y LightGBM necesitan OpenMP: `brew install libomp`.
 - **`submissions/`:** los CSV enviados a Kaggle.
 - **`reports/`:** figuras y tablas.
 
+## Notebook de Kaggle
+
+`kaggle/notebook/tweettoxic-nlp-grupo3.ipynb` es el notebook que se sube a Kaggle: resume el proyecto, recalcula las cifras de validación desde las predicciones guardadas y regenera los 10 envíos seleccionados.
+
+- **Dataset de artefactos:** necesita el dataset privado `tweettoxic-nlp-grupo3-artifacts`, que se genera con `uv run python kaggle/build_dataset.py` en `kaggle/dataset/`.
+- **Para ejecutarlo en Kaggle:** se crea el dataset privado con el contenido de `kaggle/dataset/` y se añade como input del notebook, junto con la competencia `tweet-toxic-2026-puj`.
+
 ## Datos externos: HatEval (notebook 11)
 
 El notebook `11_hateval.ipynb` usa la parte en español de **HatEval** como corpus etiquetado adicional, con autorización del profesor (2026-10-15).

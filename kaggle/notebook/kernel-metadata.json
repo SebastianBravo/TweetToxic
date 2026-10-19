@@ -1,0 +1,15 @@
+{
+  "id": "sebastianbravo9/tweettoxic-nlp-grupo3",
+  "title": "tweettoxic-nlp-grupo3",
+  "code_file": "tweettoxic-nlp-grupo3.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": ["sebastianbravo9/tweettoxic-nlp-grupo3-artifacts"],
+  "competition_sources": ["tweet-toxic-2026-puj"],
+  "kernel_sources": [],
+  "model_sources": []
+}

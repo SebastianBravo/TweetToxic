@@ -1,0 +1,11 @@
+{
+  "title": "tweettoxic-nlp-grupo3-artifacts",
+  "id": "sebastianbravo9/tweettoxic-nlp-grupo3-artifacts",
+  "subtitle": "Artefactos del notebook de TweetToxic (NLP_Grupo3): OOF, ensambles en JSON y codigo",
+  "licenses": [
+    {
+      "name": "CC-BY-NC-SA-4.0"
+    }
+  ],
+  "description": "Artefactos para reproducir el notebook de Kaggle de TweetToxic (NLP_Grupo3): modulos del proyecto (src/), registro de modelos, predicciones OOF y de test, folds, los 10 envios seleccionados y sus ensambles exportados a JSON. No contiene datos de HatEval (solo su manifest) ni modelos serializados (.joblib/.pt)."
+}

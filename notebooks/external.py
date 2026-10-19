@@ -319,10 +319,12 @@ def _config_hash(spec, weight, ext_ids, folds) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def augmented_cv(spec, texts, Y, folds, ext_ids, X_ext, Y_ext, weight, cache_dir, n_jobs=5, n_threads=2) -> dict:
+def augmented_cv(spec, texts, Y, folds, ext_ids, X_ext, Y_ext, weight, cache_dir, n_jobs=5, n_threads=2,
+                 folds_to_run=None) -> dict:
     """OOF (n, 3) en nuestras filas: en el fold k se entrena con nuestras filas de los otros folds + todas las
     externas (peso `weight`) y se predice el fold k. Cada fold se guarda en cache_dir/fold_<k>.npz en cuanto
     termina (se puede interrumpir y reanudar); si la configuración cambia, la caché se borra.
+    folds_to_run: solo esos folds (prueba rápida); las filas de los demás quedan a 0 en oof.
     Devuelve oof, info por fold y el tiempo de reloj de entrenamiento acumulado."""
     cache_dir = Path(cache_dir)
     cfg = _config_hash(spec, weight, ext_ids, folds)
@@ -333,7 +335,7 @@ def augmented_cv(spec, texts, Y, folds, ext_ids, X_ext, Y_ext, weight, cache_dir
     cfg_file.write_text(cfg)
     texts = pd.Series(texts).reset_index(drop=True)
     folds = np.asarray(folds)
-    ks = sorted(np.unique(folds))
+    ks = sorted(np.unique(folds)) if folds_to_run is None else sorted(folds_to_run)
     paths = {k: cache_dir / f"fold_{k}.npz" for k in ks}
     missing = [k for k in ks if not paths[k].exists()]
     if missing:

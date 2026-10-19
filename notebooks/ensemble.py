@@ -405,6 +405,100 @@ class Caruana(Combiner):
                 "max_iter": self.max_iter, "weights": self.weights_.round(4).tolist()}
 
 
+# ---------------------------------------------------------------------------
+# Exportación a JSON (notebook de Kaggle): combinador ajustado -> parámetros -> predicción sin scikit-learn
+# ---------------------------------------------------------------------------
+def _lr_dict(lr) -> dict:
+    return {"coef": lr.coef_.tolist(), "intercept": lr.intercept_.tolist()}
+
+
+def _calset_dict(cal: CalibratedSet) -> dict:
+    if cal.method != "platt":
+        raise ValueError(f"Solo se exporta la calibración Platt, no {cal.method}")
+    return {"method": "platt", "lr": [[_lr_dict(c.lr_) for c in row] for row in cal.cals_]}
+
+
+def combiner_to_dict(comb: Combiner) -> dict:
+    """Parámetros de un combinador ya ajustado (Single, Mean, Weighted o Stacking) como dict serializable en
+    JSON (los floats de Python se escriben con repr, que se relee sin pérdida)."""
+    if isinstance(comb, Single):
+        return {"method": "single", "index": int(comb.index)}
+    if isinstance(comb, Mean):
+        return {"method": "mean"}
+    if isinstance(comb, Weighted):
+        return {"method": "weights", "calibration": _calset_dict(comb.cal_), "weights": comb.weights_.tolist()}
+    if isinstance(comb, Stacking):
+        return {"method": comb.name, "own_label_only": bool(comb.own_label_only), "C": [float(c) for c in comb.C_],
+                "labels": [{"scaler_mean": sc.mean_.tolist(), "scaler_scale": sc.scale_.tolist(), **_lr_dict(lr)}
+                           for sc, lr in comb.models_]}
+    raise ValueError(f"Combinador no exportable: {type(comb).__name__}")
+
+
+def _expit_lr(X, coef, intercept) -> np.ndarray:
+    """P(clase 1) de una regresión logística binaria con las mismas operaciones que scikit-learn
+    (decision_function + expit), para que el resultado sea idéntico bit a bit."""
+    from scipy.special import expit
+
+    scores = X @ np.asarray(coef).T + np.asarray(intercept)
+    scores = scores.reshape(-1)
+    return expit(scores, out=scores)
+
+
+class JsonCombiner(Combiner):
+    """Combinador reconstruido desde combiner_to_dict: solo numpy y scipy (sin objetos de scikit-learn), para
+    regenerar las predicciones en otro entorno sin deserializar ningún .joblib."""
+
+    def __init__(self, params: dict):
+        self.params = params
+        self.name = params["method"]
+
+    def _calibrate(self, P):
+        cal = self.params["calibration"]["lr"]
+        out = np.empty_like(P, dtype=float)
+        for m, row in enumerate(cal):
+            for j, lr in enumerate(row):
+                out[:, m, j] = clip(_expit_lr(logit(P[:, m, j])[:, None], lr["coef"], lr["intercept"]))
+        return out
+
+    def predict(self, P):
+        P = np.asarray(P, dtype=float)
+        method = self.params["method"]
+        if method == "single":
+            return P[:, self.params["index"], :]
+        if method == "mean":
+            return P.mean(axis=1)
+        if method == "weights":
+            return np.einsum("nmj,mj->nj", self._calibrate(P), np.asarray(self.params["weights"]))
+        L = logit(P)
+        cols = []
+        for j, lab in enumerate(self.params["labels"]):
+            X = L[:, :, j] if self.params["own_label_only"] else L.reshape(len(L), -1)
+            X = (X - np.asarray(lab["scaler_mean"])) / np.asarray(lab["scaler_scale"])
+            cols.append(_expit_lr(X, lab["coef"], lab["intercept"]))
+        return np.column_stack(cols)
+
+
+def combiner_from_dict(params: dict) -> JsonCombiner:
+    return JsonCombiner(params)
+
+
+def ensemble_to_dict(model) -> dict:
+    """Todo lo que hace falta para reproducir las decisiones de un EnsembleClassifier a partir de las
+    probabilidades de sus modelos base: ids, combinador, umbrales y reglas de decisión."""
+    return {"name": model.name, "base_ids": list(model.base_ids), "combiner": combiner_to_dict(model.combiner),
+            "thresholds": {k: float(v) for k, v in model.thresholds.items()}, "hierarchy": bool(model.hierarchy),
+            "empty_as_negative": bool(model.empty_as_negative), "quote_rule": bool(getattr(model, "quote_rule", False))}
+
+
+def decide_from_dict(params: dict, P, texts) -> np.ndarray:
+    """Decisiones 0/1 (n, 3) de un ensamble exportado (ensemble_to_dict) sobre probabilidades base P (n, M, 3):
+    combinador, umbrales, jerarquía, tuits vacíos -> 000 y, si está activa, la regla de comillas (D34)."""
+    proba = combiner_from_dict(params["combiner"]).predict(P)
+    empty = md.empty_mask(texts) if params["empty_as_negative"] else None
+    quote = md.quoted_mask(texts) if params["quote_rule"] else None
+    return decide(proba, params["thresholds"], params["hierarchy"], empty, quote)
+
+
 def make_combiner(method: str, calib: str = "platt") -> Combiner:
     return {"mean": lambda: Mean(), "cal-mean": lambda: CalMean(calib), "weights": lambda: Weighted(calib),
             "stack-all": lambda: Stacking(False), "caruana": lambda: Caruana(calib),

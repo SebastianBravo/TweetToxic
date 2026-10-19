@@ -73,6 +73,7 @@ TOKEN_PATTERN = r"(?u)<\w+>|\b\w+\b"  # conserva <USER>, <URL> y palabras de una
 THRESHOLD_GRID = np.round(np.arange(0.05, 0.96, 0.01), 2)
 ESTIMATOR_N_JOBS = 2  # hilos por estimador de árboles/boosting (los folds se paralelizan aparte)
 SVD_COMPONENTS = 300
+_SKLEARN_VERSION = tuple(int(x) for x in sklearn.__version__.split(".")[:2])
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +191,11 @@ def _logreg(C=1.0, l1_ratio=None):
     """l1_ratio=None: L2 con liblinear (la del 03). l1_ratio en [0, 1]: saga (1 = L1, 0.5 = elasticnet)."""
     if l1_ratio is None:
         return LogisticRegression(C=C, class_weight="balanced", solver="liblinear", max_iter=2000, random_state=SEED)
+    # scikit-learn < 1.8 ignora l1_ratio si no se pide penalty explícitamente (en >= 1.8 penalty está obsoleto y lo
+    # deduce de l1_ratio): así el mismo modelo se entrena igual en otras versiones (p. ej. en Kaggle)
+    legacy = {"penalty": "l1" if l1_ratio == 1 else "elasticnet"} if _SKLEARN_VERSION < (1, 8) else {}
     return LogisticRegression(C=C, l1_ratio=l1_ratio, class_weight="balanced", solver="saga", max_iter=3000,
-                              tol=1e-3, random_state=SEED)
+                              tol=1e-3, random_state=SEED, **legacy)
 
 
 def _linsvm(C=1.0):
@@ -567,12 +571,9 @@ def _git_commit() -> str | None:
 
 
 def environment_info() -> dict:
-    import spacy
-
     info = {"python": platform.python_version(), "scikit-learn": sklearn.__version__, "numpy": np.__version__,
-            "pandas": pd.__version__, "spacy": spacy.__version__, "spacy_model": f"{pp.SPACY_MODEL}",
-            "seed": SEED, "git_commit": _git_commit()}
-    for lib in ("xgboost", "lightgbm"):
+            "pandas": pd.__version__, "spacy_model": f"{pp.SPACY_MODEL}", "seed": SEED, "git_commit": _git_commit()}
+    for lib in ("spacy", "xgboost", "lightgbm"):  # opcionales (p. ej. sin spaCy en otro entorno)
         try:
             info[lib] = __import__(lib).__version__
         except Exception:

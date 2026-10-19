@@ -234,3 +234,10 @@ models/**/*.pt
 models/**/cache/
 # Corpus externos (11): se descargan con notebooks/11_hateval.ipynb; no se redistribuyen (ver README.md)
 data/external/
+# Salidas locales del notebook de Kaggle (kaggle/notebook) al probarlo fuera de Kaggle
+kaggle/working/
+# Dataset de Kaggle: se regenera con `uv run python kaggle/build_dataset.py` (copia artefactos ya versionados)
+kaggle/dataset/*
+!kaggle/dataset/dataset-metadata.json
+# Checklist local para subir el notebook a Kaggle (no se versiona)
+kaggle/CHECKLIST.md
